@@ -27,16 +27,20 @@ Answers in Russian or English (`/lang`).
 ## Status
 
 Working end to end, screenshots included. The card templates committed at
-`templates/default` were cut from the iOS app, and on six real screenshots —
-iPhone and iPad, three different board scales, covering a fresh deal, an early
-mid-game, collapsed dragons, a played flower, full free cells and an endgame —
-all 205 cards are read correctly and confidently.
+`templates/default` were cut from the iOS app, and on eight real screenshots —
+iPhone and iPad, three board scales, covering a fresh deal, an early mid-game,
+collapsed dragons, a played flower, full free cells, a dead position and an
+endgame — all 284 cards are read correctly and confidently.
 
-The iPad was read correctly by the geometry pass with no changes at all, which
-is what the resolution-independence was for: 4:3 instead of 21:9, a different
-window, cards half again as wide. Its cards are now folded into the template
-bank as well, which roughly doubled the worst-case margin between a card and
-its runner-up across every screenshot.
+The iPad was read by the geometry pass with no changes at all, which is what
+the resolution-independence was for: 4:3 instead of 21:9, a different window,
+cards half again as wide.
+
+The bank is built from three of those boards, so the other five are held-out:
+they say the templates generalise rather than just fitting what they were cut
+from. Feeding all eight in raises the worst confidence from 0.77 to 0.82 but
+leaves the worst margin at 0.06 either way, which is not worth giving up the
+held-out evidence for.
 
 ## Running it
 
@@ -186,7 +190,7 @@ python -m venv .venv && .venv/bin/pip install -e ".[dev]"
 .venv/bin/python -m pytest
 ```
 
-79 tests, about 14 seconds. They cover the rules (runs, dragons, autocollect,
+81 tests, about 12 seconds. They cover the rules (runs, dragons, autocollect,
 deck validation), the solver — including replaying every move of a returned
 solution against a fresh board to check it really wins — the text format, and
 the conversation flow against stand-ins for Telegram's objects.

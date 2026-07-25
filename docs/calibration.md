@@ -12,10 +12,15 @@ starts getting things wrong — a different platform, a different skin, a game
 update that redraws the cards.
 
 If you do rebuild it, feed in screenshots from **every device you play on**.
-Adding the iPad to a bank built only from the iPhone roughly doubled the
+Adding an iPad board to a bank built only from the iPhone roughly doubled the
 worst-case margin between a card and its runner-up, on the iPhone screenshots
 as well as the iPad one: the templates end up describing the glyph rather than
 one device's rendering of it.
+
+Past that, more boards from a device already represented buy very little —
+going from three boards to five moved the worst margin not at all. Prefer to
+keep the extras as held-out fixtures instead; a screenshot the bank was cut
+from cannot tell you the bank generalises.
 
 ---
 
