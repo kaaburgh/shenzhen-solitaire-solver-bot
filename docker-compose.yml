@@ -1,0 +1,16 @@
+services:
+  bot:
+    build: .
+    image: shenzhen-solitaire-solver-bot:latest
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      SHENZHEN_TEMPLATES: /app/templates/default
+      SHENZHEN_MAX_NODES: "400000"
+      SHENZHEN_TIME_LIMIT: "20"
+      SHENZHEN_WORKERS: "2"
+      LOG_LEVEL: INFO
+    # Templates live outside the image so a re-calibration does not need a
+    # rebuild.  Drop this line to use whatever was baked in.
+    volumes:
+      - ./templates:/app/templates:ro

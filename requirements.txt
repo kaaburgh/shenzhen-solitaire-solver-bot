@@ -1,0 +1,4 @@
+# Pinned so the image builds the same way tomorrow as it does today.
+python-telegram-bot[rate-limiter]==21.10
+opencv-python-headless==5.0.0.93
+numpy==2.4.6

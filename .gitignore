@@ -1,0 +1,12 @@
+.env
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+build/
+dist/
+
+# Working copies of screenshots used for calibration.  The ones that are part
+# of the test suite live in tests/fixtures and are committed.
+screenshots/
