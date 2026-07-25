@@ -5,10 +5,17 @@ cards are; it is geometric and needs no setup. The **classification** pass
 decides which card each one is, and it matches against reference crops of the
 card glyphs — which have to be cut out of the game itself.
 
-A bank cut from the iOS app is committed at `templates/default`, so screenshot
-reading works out of the box for that version of the game. You only need what
-follows if the reader starts getting things wrong — a different platform, a
-different skin, a game update that redraws the cards.
+A bank cut from the iOS app is committed at `templates/default`, built from
+both an iPhone and an iPad screenshot, so screenshot reading works out of the
+box for that version of the game. You only need what follows if the reader
+starts getting things wrong — a different platform, a different skin, a game
+update that redraws the cards.
+
+If you do rebuild it, feed in screenshots from **every device you play on**.
+Adding the iPad to a bank built only from the iPhone roughly doubled the
+worst-case margin between a card and its runner-up, on the iPhone screenshots
+as well as the iPad one: the templates end up describing the glyph rather than
+one device's rendering of it.
 
 ---
 
@@ -32,10 +39,10 @@ Worth knowing before changing anything, because these are what the tunables in
   at every card boundary. Those steps sit on a regular lattice, and fitting
   the lattice is what tells a real boundary from a stroke of the large glyph
   on the bottom card.
-* The stacking offset is a fixed fraction of the card width — 0.243 on both
-  board scales measured so far. It is measured per screenshot where there is
-  anything stacked to measure it from, and falls back to that fraction where
-  there is not.
+* The stacking offset is a fixed fraction of the card width — 0.243 to 0.246
+  across three board scales on two devices. It is measured per screenshot
+  where there is anything stacked to measure it from, and falls back to that
+  fraction where there is not.
 * A free cell locked by four collapsed dragons shows a **card back**, not a
   dragon face. The back is a green check pattern: about 47% of it reads as
   green, against under 1% of a card face. The back does not say *which*

@@ -27,13 +27,16 @@ Answers in Russian or English (`/lang`).
 ## Status
 
 Working end to end, screenshots included. The card templates committed at
-`templates/default` were cut from the iOS app, and on five real screenshots
-covering a fresh-ish deal, collapsed dragons, a played flower, full free cells
-and an endgame, all 148 cards are read correctly and confidently.
+`templates/default` were cut from the iOS app, and on six real screenshots —
+iPhone and iPad, three different board scales, covering a fresh deal, an early
+mid-game, collapsed dragons, a played flower, full free cells and an endgame —
+all 205 cards are read correctly and confidently.
 
-Only the iPhone has been tested. If the iPad lays the board out differently the
-geometry should adapt on its own — nothing is hard-coded per resolution — but
-that is untested until there are iPad screenshots to check against.
+The iPad was read correctly by the geometry pass with no changes at all, which
+is what the resolution-independence was for: 4:3 instead of 21:9, a different
+window, cards half again as wide. Its cards are now folded into the template
+bank as well, which roughly doubled the worst-case margin between a card and
+its runner-up across every screenshot.
 
 ## Running it
 
@@ -183,7 +186,7 @@ python -m venv .venv && .venv/bin/pip install -e ".[dev]"
 .venv/bin/python -m pytest
 ```
 
-78 tests, about 14 seconds. They cover the rules (runs, dragons, autocollect,
+79 tests, about 14 seconds. They cover the rules (runs, dragons, autocollect,
 deck validation), the solver — including replaying every move of a returned
 solution against a fresh board to check it really wins — the text format, and
 the conversation flow against stand-ins for Telegram's objects.

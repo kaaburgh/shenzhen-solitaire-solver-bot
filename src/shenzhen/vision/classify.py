@@ -33,15 +33,14 @@ from ..cards import (
 #: reference crops are normalised to this size before matching
 PATCH_SIZE = (40, 40)
 
-# Thresholds for "read this one back to the user before trusting it".  The
-# numbers below come from 1594 reads of synthetic boards, where correct
-# matches never scored under 0.85 and 99% of them beat the runner-up by more
-# than 0.039.  Re-check them against real screenshots -- the game's glyphs are
-# far more distinctive than the stand-ins, so these should be conservative.
+# Thresholds for "read this one back to the user before trusting it".  Across
+# the screenshot fixtures -- 205 reads, two devices, three board scales --
+# every correct match scored at least 0.89 and beat the runner-up by at least
+# 0.06, so both of these sit well clear of anything seen in practice.
 #: below this correlation the match is a guess worth confirming
 MIN_CONFIDENCE = 0.62
 #: and below this margin over the runner-up it is ambiguous
-MIN_MARGIN = 0.03
+MIN_MARGIN = 0.04
 
 _ALL_CARDS: tuple[int, ...] = tuple(
     [make_card(s, r) for s in SUITS for r in range(1, 10)]
