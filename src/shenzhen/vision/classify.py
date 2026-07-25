@@ -78,7 +78,7 @@ class TemplateBank:
         return [c for c in _ALL_CARDS if c not in self.templates]
 
     @classmethod
-    def load(cls, path: str | Path) -> "TemplateBank":
+    def load(cls, path: str | Path) -> TemplateBank:
         directory = Path(path)
         if not directory.is_dir():
             raise FileNotFoundError(f"no template bank at {directory}")

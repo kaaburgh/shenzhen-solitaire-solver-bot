@@ -21,7 +21,8 @@ list the solver returns -- they are not things a player does.
 
 from __future__ import annotations
 
-from typing import Iterator, NamedTuple, Sequence
+from collections.abc import Iterator, Sequence
+from typing import NamedTuple
 
 from .cards import (
     DRAGON_BASE,

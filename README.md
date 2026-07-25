@@ -190,6 +190,10 @@ python -m venv .venv && .venv/bin/pip install -e ".[dev]"
 .venv/bin/python -m pytest
 ```
 
+CI runs the suite on Python 3.11, 3.12 and 3.13, lints with ruff, and builds
+the image — then checks the built image can actually solve a deal and load its
+template bank, rather than only that the build exited zero.
+
 81 tests, about 12 seconds. They cover the rules (runs, dragons, autocollect,
 deck validation), the solver — including replaying every move of a returned
 solution against a fresh board to check it really wins — the text format, and

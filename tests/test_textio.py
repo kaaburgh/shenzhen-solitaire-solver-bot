@@ -1,9 +1,8 @@
 import pytest
 
 from shenzhen.cards import RED, locked_cell, make_card, make_dragon
-from shenzhen.game import InvalidBoard, deal
+from shenzhen.game import InvalidBoard, Move, deal
 from shenzhen.notation import board_to_text, describe_move, render_board
-from shenzhen.game import Move
 from shenzhen.textio import parse_board
 
 # A real shuffle of the 40-card deck: eight columns of five.

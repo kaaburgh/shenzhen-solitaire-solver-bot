@@ -15,8 +15,8 @@ from pathlib import Path
 import cv2
 import numpy as np
 import pytest
-
 from fake_board import OFFSET, render
+
 from shenzhen.cards import FULL_DECK, GREEN, RED, card_code, locked_cell, make_dragon
 from shenzhen.game import State, auto_resolve
 from shenzhen.textio import parse_board

@@ -16,7 +16,7 @@ from __future__ import annotations
 import heapq
 import time
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 
 from .cards import SUITS, is_locked, locked_colour
 from .game import Move, State, successors
@@ -28,7 +28,7 @@ DEFAULT_TIME_LIMIT = 20.0
 HEURISTIC_WEIGHT = 8
 
 
-class Status(str, Enum):
+class Status(StrEnum):
     SOLVED = "solved"
     UNSOLVABLE = "unsolvable"
     UNKNOWN = "unknown"

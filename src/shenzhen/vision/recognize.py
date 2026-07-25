@@ -27,7 +27,7 @@ from .layout import BoardLayout, Box, LayoutConfig, LayoutError, corner_patch, d
 class RecognitionError(RuntimeError):
     """The screenshot was read, but the result is not a legal position."""
 
-    def __init__(self, message: str, *, reads: list["ReadCard"] | None = None) -> None:
+    def __init__(self, message: str, *, reads: list[ReadCard] | None = None) -> None:
         super().__init__(message)
         self.reads = reads or []
 

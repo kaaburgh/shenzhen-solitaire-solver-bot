@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Sequence
+from collections.abc import Sequence
 
 from .cards import SUIT_LETTERS, card_code, cell_code
 from .game import Move, State
