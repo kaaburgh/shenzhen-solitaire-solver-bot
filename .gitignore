@@ -1,0 +1,14 @@
+.env
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+build/
+dist/
+
+# Screenshots used for calibration -- keep them out of the repo unless you
+# mean to publish them.
+screenshots/
+templates/*/
+!templates/.gitkeep
