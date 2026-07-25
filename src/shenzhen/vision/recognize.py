@@ -10,7 +10,7 @@ import numpy as np
 
 from ..cards import (
     FLOWER,
-    SUIT_LETTERS,
+    SUITS,
     card_code,
     dragon_colour,
     is_dragon,
@@ -87,7 +87,7 @@ def recognize(
     reads: list[ReadCard] = []
 
     def read(box: Box, where: str) -> ReadCard | None:
-        patch = corner_patch(image, box, layout.card_w, config, max_h=layout.offset)
+        patch = corner_patch(image, box, layout.card_w, config)
         guess = classify(patch, bank)
         if guess is None:
             return None
@@ -110,19 +110,27 @@ def recognize(
         columns.append(())
 
     # --- free cells ------------------------------------------------------
+    # A cell locked by four collapsed dragons shows a card back, which the
+    # layout pass recognises; its colour is worked out further down, since
+    # the back does not say which dragons went into it.
     free: list[int | None] = [None] * NUM_FREE_CELLS
+    locked_slots: list[int] = []
     for index, box in enumerate(layout.free_cells[:NUM_FREE_CELLS]):
         if box is None:
+            continue
+        if layout.locked_cells[index]:
+            locked_slots.append(index)
             continue
         entry = read(box, f"free{index + 1}")
         if entry is not None:
             free[index] = entry.card
 
     # --- flower ----------------------------------------------------------
-    flower_collected = False
+    # An empty flower slot is a watermark on the felt, too dim to show up as a
+    # card at all, so the slot holding anything means the flower is gone.
+    flower_collected = layout.flower is not None
     if layout.flower is not None:
-        entry = read(layout.flower, "flower")
-        flower_collected = entry is not None
+        read(layout.flower, "flower")
 
     # --- foundations -----------------------------------------------------
     foundations = [0, 0, 0]
@@ -139,7 +147,7 @@ def recognize(
             continue
         foundations[suit_of(entry.card)] = rank_of(entry.card)
 
-    free = _resolve_locked_cells(columns, free, warnings)
+    _colour_locked_cells(columns, free, locked_slots, warnings)
 
     state = State(
         columns=tuple(columns),
@@ -161,38 +169,38 @@ def _flower_on_table(columns: list[tuple[int, ...]], free: list[int | None]) -> 
     return any(FLOWER in col for col in columns) or FLOWER in free
 
 
-def _resolve_locked_cells(
-    columns: list[tuple[int, ...]], free: list[int | None], warnings: list[str]
-) -> list[int | None]:
-    """Tell a dragon parked in a free cell from four collapsed ones.
+def _colour_locked_cells(
+    columns: list[tuple[int, ...]],
+    free: list[int | None],
+    locked_slots: list[int],
+    warnings: list[str],
+) -> None:
+    """Work out which dragons went into each locked cell.
 
-    Both look like a single dragon face in the cell, but the rest of the deck
-    settles it: four dragons of a colour are still in play if they are still
-    visible, and exactly one is visible once they have been collapsed.
+    The card back a locked cell shows is the same whichever colour was
+    collapsed, so it has to be deduced: a colour is collapsed exactly when
+    none of its four dragons is anywhere on the board.
     """
-    counts: dict[int, int] = {}
+    if not locked_slots:
+        return
+
+    visible = {colour: 0 for colour in SUITS}
     for col in columns:
         for card in col:
             if is_dragon(card):
-                counts[dragon_colour(card)] = counts.get(dragon_colour(card), 0) + 1
+                visible[dragon_colour(card)] += 1
     for cell in free:
         if cell is not None and is_dragon(cell):
-            counts[dragon_colour(cell)] = counts.get(dragon_colour(cell), 0) + 1
+            visible[dragon_colour(cell)] += 1
 
-    resolved: list[int | None] = list(free)
-    for index, cell in enumerate(free):
-        if cell is None or not is_dragon(cell):
-            continue
-        colour = dragon_colour(cell)
-        visible = counts.get(colour, 0)
-        if visible == 1:
-            resolved[index] = locked_cell(colour)
-        elif visible != 4:
-            warnings.append(
-                f"free cell {index + 1}: {visible} {SUIT_LETTERS[colour]} dragons visible, "
-                "expected 1 (collapsed) or 4 (still in play)"
-            )
-    return resolved
+    collapsed = [colour for colour in SUITS if visible[colour] == 0]
+    if len(collapsed) != len(locked_slots):
+        warnings.append(
+            f"{len(locked_slots)} free cell(s) look collapsed, but "
+            f"{len(collapsed)} dragon colour(s) are missing from the board"
+        )
+    for slot, colour in zip(locked_slots, collapsed):
+        free[slot] = locked_cell(colour)
 
 
 def load_bank(path: str | Path | None) -> TemplateBank | None:

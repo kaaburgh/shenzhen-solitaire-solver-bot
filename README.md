@@ -26,11 +26,14 @@ Answers in Russian or English (`/lang`).
 
 ## Status
 
-The rules engine, the solver and the bot are done and tested. **Screenshot
-reading needs a one-off calibration against your own screenshots** before it
-will work — see [Reading screenshots](#reading-screenshots) below. Until then
-the bot accepts positions typed out in text and says so when you send it a
-picture.
+Working end to end, screenshots included. The card templates committed at
+`templates/default` were cut from the iOS app, and on five real screenshots
+covering a fresh-ish deal, collapsed dragons, a played flower, full free cells
+and an endgame, all 148 cards are read correctly and confidently.
+
+Only the iPhone has been tested. If the iPad lays the board out differently the
+geometry should adapt on its own — nothing is hard-coded per resolution — but
+that is untested until there are iPad screenshots to check against.
 
 ## Running it
 
@@ -92,32 +95,47 @@ specific problem — `missing R4x1; duplicated DGx1` — rather than a shrug.
 
 ## Reading screenshots
 
-Two passes. The layout pass finds the cards geometrically: it thresholds the
-image, measures the card width from the connected components, splits the top
-row of slots from the tableau, groups the tableau into eight columns and cuts
-each column apart along the seams between overlapping cards. All of it is
-expressed in fractions of the measured card width, so it does not care what
-resolution you play at.
+Two passes, both resolution-independent — every length is a fraction of the
+card width the image itself is measured for, so letterboxing and whatever
+scale the game picks are both irrelevant.
 
-The classification pass reads each card's top-left corner glyph — the part
-that stays visible when another card is laid over it. Ink colour picks the
-suit outright (green and red print are found by saturation, black by
-darkness), and template matching picks the rank within that suit.
+The **layout** pass works out the geometry. The board is one grid of eight
+slots: the tableau columns are slots 0–7, and along the top slots 0–2 are the
+free cells, slot 3 the dragon buttons, slot 4 the flower, slots 5–7 the
+foundations. The grid is anchored on the **dragon buttons**, found by their
+tan colour rather than by brightness so that a darkened one still counts —
+they are always drawn and never move, which is what makes the free cells
+identifiable on a board whose first columns happen to be empty.
 
-**Those templates have to be cut from real screenshots**, which is the
-calibration step: [docs/calibration.md](docs/calibration.md). It takes two
-screenshots of a fresh deal and about ten minutes.
+Splitting a column into cards is the part worth explaining. Overlapping cards
+do not come apart when the image is thresholded — a column is one tall blob,
+and the seam between two cards is not dark enough to find. What is findable is
+that each card is drawn with a top-to-bottom gradient, so every boundary is a
+step up in row brightness. Those steps fall on a regular lattice, and fitting
+it separates real boundaries from the strokes of the big glyph on the bottom
+card. The stacking offset comes out of the same fit, and falls back to the
+fraction of the card width the game is known to use when a board has nothing
+stacked on it to measure.
 
-What the pipeline already handles: cards buried under other cards, the
-stacking offset measured rather than assumed, empty slots, and telling a
-dragon parked in a free cell apart from four collapsed ones (both look like a
-single dragon face — the rest of the deck settles it, since four of that
-colour are still visible in the first case and one in the second).
+The **classification** pass reads each card's top-left glyph — the part that
+stays visible under another card. Ink colour settles the suit on its own
+(green and red print are found by saturation, black by darkness) and template
+matching picks the rank within it.
 
-The bot always shows you the position it read and asks before spending time
-on it, and it names any card it is unsure about. Send the screenshot **as a
-file** rather than as a photo if you can: Telegram recompresses photos and
-the glyphs smear.
+A free cell holding four collapsed dragons shows a patterned back rather than
+a dragon face; it is told apart by that pattern being about half green against
+a card face's ~1%. The back does not say which dragons went into it, so that
+is deduced — a colour is collapsed exactly when none of its four dragons is
+left anywhere on the board.
+
+The templates are cut from real screenshots, and rebuilding them is
+[docs/calibration.md](docs/calibration.md) — worth reading if the reader ever
+starts getting cards wrong.
+
+The bot always shows you the position it read and asks before spending time on
+it, and it names any card it is unsure about. Send the screenshot **as a file**
+rather than as a photo if you can: Telegram recompresses photos and the small
+glyphs smear.
 
 ## Rules
 
@@ -165,16 +183,19 @@ python -m venv .venv && .venv/bin/pip install -e ".[dev]"
 .venv/bin/python -m pytest
 ```
 
-82 tests, about 13 seconds. They cover the rules (runs, dragons, autocollect,
+78 tests, about 14 seconds. They cover the rules (runs, dragons, autocollect,
 deck validation), the solver — including replaying every move of a returned
-solution against a fresh board to check it really wins — the text format, the
-conversation flow against stand-ins for Telegram's objects, and the vision
-pipeline against a synthetic board renderer (`tests/fake_board.py`) that
-reproduces the geometry of the game screen but not its artwork.
+solution against a fresh board to check it really wins — the text format, and
+the conversation flow against stand-ins for Telegram's objects.
 
-That last one is worth being precise about: it proves the pipeline is wired
-up correctly, not that the thresholds suit the real game. Only screenshots
-can do that.
+The vision pipeline is tested on two levels. `tests/fixtures/` holds real
+screenshots with the position written out beside them, and reading each one
+back exactly is what says the thresholds suit the real artwork. On top of
+that, `tests/fake_board.py` renders boards with the structure of the game
+screen but stand-in marks, which covers states no screenshot happens to show —
+an empty tableau, every cell locked, a board whose first columns are empty.
+Those synthetic tests deliberately stop at the geometry: matching stand-in
+marks would measure the stand-in, not the pipeline.
 
 ```
 src/shenzhen/

@@ -93,7 +93,7 @@ class TemplateBank:
             image = cv2.imread(str(file), cv2.IMREAD_GRAYSCALE)
             if image is None:
                 continue
-            templates[card] = normalise(image)
+            templates[card] = standardise(image)
         return cls(templates)
 
     def save(self, path: str | Path) -> None:
@@ -105,18 +105,20 @@ class TemplateBank:
             cv2.imwrite(str(directory / f"{card_code(card)}.png"), scaled.astype(np.uint8))
 
     def add(self, card: int, patch: np.ndarray) -> None:
-        self.templates[card] = normalise(patch)
+        self.templates[card] = standardise(patch)
 
 
-def normalise(patch: np.ndarray) -> np.ndarray:
-    """Grayscale, resize and zero-mean/unit-variance a crop.
+def standardise(patch: np.ndarray) -> np.ndarray:
+    """Resize to the reference size and remove brightness and contrast.
 
-    Removing the mean and scale is what makes matching survive the brightness
-    differences between a card in the tableau and the same card in a cell.
+    Removing the mean and scale is what makes matching survive the difference
+    between a card in the tableau and the same card in a free cell.
     """
     if patch.ndim == 3:
         patch = cv2.cvtColor(patch, cv2.COLOR_BGR2GRAY)
-    resized = cv2.resize(patch, PATCH_SIZE, interpolation=cv2.INTER_AREA).astype(np.float32)
+    resized = cv2.resize(
+        patch.astype(np.float32), PATCH_SIZE, interpolation=cv2.INTER_AREA
+    )
     resized -= resized.mean()
     deviation = float(resized.std())
     if deviation > 1e-6:
@@ -158,12 +160,11 @@ def ink_colour(patch: np.ndarray) -> int | None:
 def candidates_for_colour(colour: int | None) -> tuple[int, ...]:
     if colour is None:
         return _ALL_CARDS
-    if colour == GREEN:
-        return tuple(c for c in _ALL_CARDS if c != FLOWER and colour_of(c) == GREEN)
     if colour == BLACK:
         return tuple(c for c in _ALL_CARDS if c != FLOWER and colour_of(c) == BLACK)
-    # The flower is printed in red, so it stays in the red shortlist.
-    return tuple(c for c in _ALL_CARDS if colour_of(c) == RED)
+    # The flower is drawn in red and green at once, so whichever of the two
+    # wins the hue average, it has to stay on the shortlist.
+    return tuple(c for c in _ALL_CARDS if c == FLOWER or colour_of(c) == colour)
 
 
 def match(patch: np.ndarray, bank: TemplateBank, colour: int | None = None) -> Guess | None:
@@ -171,7 +172,7 @@ def match(patch: np.ndarray, bank: TemplateBank, colour: int | None = None) -> G
     if not bank.templates:
         raise ValueError("the template bank is empty; run the calibrate command first")
 
-    target = normalise(patch)
+    target = standardise(patch)
     shortlist = [c for c in candidates_for_colour(colour) if c in bank.templates]
     if not shortlist:
         # The colour reading disagrees with the bank; fall back to everything.

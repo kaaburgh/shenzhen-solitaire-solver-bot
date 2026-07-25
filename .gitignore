@@ -7,8 +7,6 @@ __pycache__/
 build/
 dist/
 
-# Screenshots used for calibration -- keep them out of the repo unless you
-# mean to publish them.
+# Working copies of screenshots used for calibration.  The ones that are part
+# of the test suite live in tests/fixtures and are committed.
 screenshots/
-templates/*/
-!templates/.gitkeep

@@ -29,7 +29,7 @@ import numpy as np
 from ..cards import card_code
 from ..notation import render_board
 from ..textio import parse_board
-from .classify import TemplateBank, normalise
+from .classify import TemplateBank, standardise
 from .layout import LayoutConfig, annotate, corner_patch, detect_layout
 from .recognize import RecognitionError, recognize
 
@@ -82,13 +82,13 @@ def cmd_build(args: argparse.Namespace) -> int:
                     f"--debug to see what was found."
                 )
             for box, card in zip(boxes, cards):
-                patch = corner_patch(image, box, layout.card_w, config, max_h=layout.offset)
-                samples.setdefault(card, []).append(normalise(patch))
+                patch = corner_patch(image, box, layout.card_w, config)
+                samples.setdefault(card, []).append(standardise(patch))
 
     bank = TemplateBank()
     for card, patches in samples.items():
         averaged = np.mean(np.stack(patches, axis=0), axis=0)
-        bank.templates[card] = normalise(averaged)
+        bank.templates[card] = standardise(averaged)
 
     bank.save(args.out)
     print(f"wrote {len(bank)} templates to {args.out}")

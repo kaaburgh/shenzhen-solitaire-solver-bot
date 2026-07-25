@@ -1,28 +1,38 @@
 """Tests for the screenshot pipeline.
 
-These run against :mod:`fake_board`, which reproduces the *geometry* of the
-game screen but not its artwork.  They prove the pipeline is wired up
-correctly -- that columns are found, stacked cards are split apart, ink colour
-picks the suit, templates pick the rank, and a collapsed cell is told apart
-from a parked dragon.  They cannot prove the thresholds suit the real game;
-only screenshots can.  See docs/calibration.md.
+Two layers.  :mod:`fake_board` renders positions with the structure of the
+game screen but stand-in artwork, which is how states no screenshot happens to
+show get covered -- an empty tableau, every cell locked.  The fixtures under
+``tests/fixtures`` are real screenshots with the position written out beside
+them, and those are what say the thresholds suit the real thing.
 """
 
 from __future__ import annotations
 
 import random
+from pathlib import Path
 
+import cv2
 import numpy as np
 import pytest
 
-from fake_board import render
-from shenzhen.cards import FULL_DECK, GREEN, RED, locked_cell, make_dragon
+from fake_board import OFFSET, render
+from shenzhen.cards import FULL_DECK, GREEN, RED, card_code, locked_cell, make_dragon
 from shenzhen.game import State, auto_resolve
-from shenzhen.vision.classify import TemplateBank, ink_colour, normalise
-from shenzhen.vision.layout import LayoutConfig, LayoutError, corner_patch, detect_layout
+from shenzhen.textio import parse_board
+from shenzhen.vision.classify import TemplateBank, ink_colour
+from shenzhen.vision.layout import (
+    LayoutConfig,
+    LayoutError,
+    corner_patch,
+    detect_layout,
+    find_dragon_buttons,
+)
 from shenzhen.vision.recognize import recognize
 
 CONFIG = LayoutConfig()
+FIXTURES = Path(__file__).parent / "fixtures"
+BANK_PATH = Path(__file__).parent.parent / "templates" / "default"
 
 
 def raw_deal(seed: int) -> State:
@@ -37,30 +47,10 @@ def raw_deal(seed: int) -> State:
     )
 
 
-@pytest.fixture(scope="module")
-def bank() -> TemplateBank:
-    """Cut a template bank the same way the calibrate command does."""
-    samples: dict[int, list[np.ndarray]] = {}
-    for seed in (101, 202):
-        state = raw_deal(seed)
-        image = render(state)
-        layout = detect_layout(image, CONFIG)
-        for boxes, cards in zip(layout.columns, state.columns):
-            assert len(boxes) == len(cards)
-            for box, card in zip(boxes, cards):
-                patch = corner_patch(image, box, layout.card_w, CONFIG, max_h=layout.offset)
-                samples.setdefault(card, []).append(normalise(patch))
-
-    templates = TemplateBank()
-    for card, patches in samples.items():
-        templates.templates[card] = normalise(np.mean(np.stack(patches), axis=0))
-    return templates
+# --- layout, on synthetic boards -------------------------------------------
 
 
-# --- layout ----------------------------------------------------------------
-
-
-def test_every_column_is_found_and_cut_into_the_right_number_of_cards():
+def test_every_column_is_cut_into_the_right_number_of_cards():
     for seed in range(5):
         state = auto_resolve(raw_deal(seed))[0]
         layout = detect_layout(render(state), CONFIG)
@@ -68,127 +58,173 @@ def test_every_column_is_found_and_cut_into_the_right_number_of_cards():
 
 
 def test_the_stacking_offset_is_measured_not_guessed():
-    from fake_board import OFFSET
-
     layout = detect_layout(render(raw_deal(1)), CONFIG)
     assert abs(layout.offset - OFFSET) <= 2
 
 
-def test_a_fresh_deal_has_nothing_in_the_top_row():
-    """The top row is empty at the start, so there is no gap to split on --
-    every card must still be assigned to the tableau."""
-    layout = detect_layout(render(raw_deal(1)), CONFIG)
+def test_the_dragon_buttons_anchor_the_grid():
+    """The buttons sit in slot 3 and are always drawn, which is what lets the
+    free cells be identified when the leftmost ones are empty."""
+    image = render(raw_deal(1))
+    assert len(find_dragon_buttons(image, 190, CONFIG)) == 3
+
+    layout = detect_layout(image, CONFIG)
+    assert not layout.warnings
     assert all(cell is None for cell in layout.free_cells)
-    assert layout.flower is None
-    assert all(slot is None for slot in layout.foundations)
     assert sum(len(c) for c in layout.columns) == 40
 
 
+def test_a_board_whose_first_columns_are_empty_still_lines_up():
+    """Without the button anchor this is the case that breaks: the leftmost
+    card is in column 3, not column 1."""
+    base = raw_deal(7)
+    columns = ((), (), *base.columns[2:])
+    spare = base.columns[0] + base.columns[1]
+    state = State(
+        columns=columns[:7] + (columns[7] + spare,),
+        free=base.free,
+        foundations=base.foundations,
+        flower=base.flower,
+    )
+    layout = detect_layout(render(state), CONFIG)
+    assert [len(c) for c in layout.columns] == [len(c) for c in state.columns]
+
+
 def test_a_picture_that_is_not_the_board_is_refused():
-    noise = np.zeros((400, 400, 3), dtype=np.uint8)
     with pytest.raises(LayoutError):
-        detect_layout(noise, CONFIG)
-
-
-# --- ink colour ------------------------------------------------------------
+        detect_layout(np.zeros((400, 400, 3), dtype=np.uint8), CONFIG)
 
 
 def test_ink_colour_separates_the_three_suits():
     from shenzhen.cards import BLACK, make_card
 
-    for suit, expected in ((GREEN, GREEN), (RED, RED), (BLACK, BLACK)):
-        state = raw_deal(1)
-        image = render(state)
-        layout = detect_layout(image, CONFIG)
-        for boxes, cards in zip(layout.columns, state.columns):
-            for box, card in zip(boxes, cards):
-                if card != make_card(suit, 5):
-                    continue
-                patch = corner_patch(image, box, layout.card_w, CONFIG, max_h=layout.offset)
-                assert ink_colour(patch) == expected
+    state = raw_deal(1)
+    image = render(state)
+    layout = detect_layout(image, CONFIG)
+    for boxes, cards in zip(layout.columns, state.columns):
+        for box, card in zip(boxes, cards):
+            for suit in (GREEN, RED, BLACK):
+                if card == make_card(suit, 5):
+                    patch = corner_patch(image, box, layout.card_w, CONFIG)
+                    assert ink_colour(patch) == suit
 
 
 def test_a_blank_crop_reads_as_no_card():
-    blank = np.full((40, 40, 3), (222, 232, 238), dtype=np.uint8)
-    assert ink_colour(blank) is None
+    assert ink_colour(np.full((40, 40, 3), (222, 232, 238), dtype=np.uint8)) is None
 
 
-# --- end to end ------------------------------------------------------------
+# --- free cells and foundations, on synthetic boards -----------------------
 
 
-@pytest.mark.parametrize("seed", range(300, 312))
-def test_a_rendered_board_reads_back_exactly(seed, bank):
-    state = auto_resolve(raw_deal(seed))[0]
-    result = recognize(render(state), bank)
-    assert result.state == state
-    assert not result.warnings
-
-
-def test_reads_are_correct_and_rarely_flagged(bank):
-    """Every card is read right, and the "check this one" flag stays rare.
-
-    A handful of flags is the intended behaviour -- the stand-in glyphs are a
-    plain sans-serif font where 5 and 6 really are close -- but if most cards
-    start tripping it, the thresholds have drifted and the confirmation step
-    stops meaning anything.
-    """
-    total = flagged = 0
-    for seed in range(300, 312):
-        state = auto_resolve(raw_deal(seed))[0]
-        result = recognize(render(state), bank)
-        assert result.state == state
-        total += len(result.reads)
-        flagged += len(result.uncertain)
-
-    assert total > 300
-    assert flagged / total < 0.03, f"{flagged} of {total} reads flagged as uncertain"
-
-
-def test_free_cells_and_foundations_are_read(bank):
-    state = raw_deal(400)
-    # Park a dragon in a cell and put something on two foundations.
+def test_free_cells_and_foundations_land_in_the_right_slots():
+    base = raw_deal(400)
     state = State(
-        columns=tuple(c[:-1] if i < 3 else c for i, c in enumerate(state.columns)),
-        free=(state.columns[0][-1], state.columns[1][-1], state.columns[2][-1]),
-        foundations=(0, 0, 0),
-        flower=False,
+        columns=tuple(c[:-1] if i < 3 else c for i, c in enumerate(base.columns)),
+        free=tuple(base.columns[i][-1] for i in range(3)),
+        foundations=(2, 0, 5),
+        flower=True,
     )
-    result = recognize(render(state), bank)
-    assert sorted(x for x in result.state.free if x is not None) == sorted(
-        x for x in state.free if x is not None
-    )
+    layout = detect_layout(render(state), CONFIG)
+
+    assert all(box is not None for box in layout.free_cells)
+    assert layout.flower is not None
+    assert sum(box is not None for box in layout.foundations) == 2
+    assert not layout.warnings
 
 
-def test_a_collapsed_cell_is_told_apart_from_a_parked_dragon(bank):
-    """Both look like one dragon face in a cell.  The rest of the deck decides:
-    four of that colour still visible means it is a real card."""
+def test_a_locked_cell_is_told_apart_from_a_card_by_its_back():
+    """Both fill the same slot; only the pattern on the back says which."""
     base = raw_deal(500)
-
-    # All four green dragons removed from play, one face shown in a cell.
-    without_green = tuple(
-        tuple(card for card in column if card != make_dragon(GREEN)) for column in base.columns
-    )
-    collapsed = State(
-        columns=without_green,
-        free=(locked_cell(GREEN), None, None),
+    state = State(
+        columns=base.columns,
+        free=(locked_cell(GREEN), make_dragon(RED), None),
         foundations=(0, 0, 0),
         flower=False,
     )
-    result = recognize(render(collapsed), bank)
-    assert result.state.free[0] == locked_cell(GREEN)
-    assert not result.warnings
+    layout = detect_layout(render(state), CONFIG)
+    assert layout.locked_cells == [True, False, False]
 
-    # A red dragon merely sitting in a cell, with its three partners on the table.
-    parked_source = next(
-        (i, c) for i, c in enumerate(base.columns) if c and c[-1] == make_dragon(RED)
+
+def test_a_board_with_every_cell_locked_is_read():
+    """The end of a game, which none of the screenshot fixtures happens to
+    show: all twelve dragons collapsed, so all three cells hold a back."""
+    state = parse_board(
+        """
+        free: XG XR XB
+        flower: 1
+        foundations: 8 8 8
+        1: G9
+        2: R9
+        3: B9
+        4:
+        5:
+        6:
+        7:
+        8:
+        """,
+        settle=False,
     )
-    index, column = parked_source
-    parked = State(
-        columns=tuple(c[:-1] if i == index else c for i, c in enumerate(base.columns)),
-        free=(make_dragon(RED), None, None),
-        foundations=(0, 0, 0),
-        flower=False,
+    layout = detect_layout(render(state), CONFIG)
+    assert layout.locked_cells == [True, True, True]
+    assert [len(c) for c in layout.columns] == [1, 1, 1, 0, 0, 0, 0, 0]
+    assert not layout.warnings
+
+
+def test_the_offset_falls_back_when_nothing_is_stacked():
+    """With one card per column there is no stacking offset to measure, so
+    the splitter must not invent one out of the glyphs."""
+    state = parse_board(
+        """
+        free: XG XR XB
+        flower: 1
+        foundations: 8 8 8
+        1: G9
+        2: R9
+        3: B9
+        4:
+        5:
+        6:
+        7:
+        8:
+        """,
+        settle=False,
     )
-    result = recognize(render(parked), bank)
-    assert result.state.free[0] == make_dragon(RED)
-    assert not result.warnings
+    layout = detect_layout(render(state), CONFIG)
+    assert abs(layout.offset - round(CONFIG.nominal_offset * layout.card_w)) <= 2
+
+
+# --- real screenshots ------------------------------------------------------
+
+
+def _fixtures() -> list[tuple[str, Path, Path]]:
+    found = []
+    for image in sorted(FIXTURES.glob("*/*.png")):
+        expected = image.with_suffix(".txt")
+        if expected.exists():
+            found.append((f"{image.parent.name}/{image.stem}", image, expected))
+    return found
+
+
+FIXTURE_CASES = _fixtures()
+
+
+def test_there_are_screenshot_fixtures_to_test_against():
+    """Guard against the fixtures silently going missing -- without them the
+    rest of this file only proves the pipeline is self-consistent."""
+    assert FIXTURE_CASES, f"no screenshot fixtures under {FIXTURES}"
+
+
+@pytest.mark.skipif(not BANK_PATH.is_dir(), reason="no template bank installed")
+@pytest.mark.parametrize("name,image_path,expected_path", FIXTURE_CASES, ids=lambda v: v if isinstance(v, str) else "")
+def test_a_real_screenshot_reads_back_exactly(name, image_path, expected_path):
+    bank = TemplateBank.load(BANK_PATH)
+    image = cv2.imread(str(image_path))
+    assert image is not None, f"could not read {image_path}"
+
+    result = recognize(image, bank)
+    expected = parse_board(expected_path.read_text(encoding="utf-8"))
+
+    assert result.state == expected, name
+    assert not result.warnings, result.warnings
+    unsure = [f"{r.where}={card_code(r.card)}" for r in result.uncertain]
+    assert not unsure, unsure
