@@ -1,7 +1,10 @@
 services:
   bot:
+    # Pulled by default -- `docker compose pull && docker compose up -d` is
+    # the whole deploy. `docker compose up -d --build` still works for local
+    # development; it just builds this same tag from source instead.
+    image: ghcr.io/kaaburgh/shenzhen-solitaire-solver-bot:latest
     build: .
-    image: shenzhen-solitaire-solver-bot:latest
     restart: unless-stopped
     env_file: .env
     environment:
@@ -10,7 +13,17 @@ services:
       SHENZHEN_TIME_LIMIT: "20"
       SHENZHEN_WORKERS: "2"
       LOG_LEVEL: INFO
-    # Templates live outside the image so a re-calibration does not need a
-    # rebuild.  Drop this line to use whatever was baked in.
-    volumes:
-      - ./templates:/app/templates:ro
+    # No bind mount over /app/templates on purpose. The card templates are
+    # baked into the image and belong to the same release as the code that
+    # reads them; mounting the checkout's copy on top would mask them, and
+    # since `docker compose pull` never touches the checkout, a release that
+    # recalibrates the bank would leave the deployment running new code
+    # against old templates without saying anything.
+    #
+    # To try a locally rebuilt bank, put it in a docker-compose.override.yml
+    # (Compose picks that up automatically and it is gitignored):
+    #
+    #   services:
+    #     bot:
+    #       volumes:
+    #         - ./templates:/app/templates:ro

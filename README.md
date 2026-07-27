@@ -55,19 +55,31 @@ genuine washed-out ink. Both are fixed in `ink_colour`
 
 ## Running it
 
+Every [release](#releases) publishes an image to `ghcr.io`, so a deploy is a
+pull, not a build:
+
 ```sh
 cp .env.example .env      # put your @BotFather token in it
-docker compose up -d --build
+
+# the package is private, same as the repo -- do this once per server
+echo "$GHCR_TOKEN" | docker login ghcr.io -u YOUR_GITHUB_USERNAME --password-stdin
+
+docker compose pull
+docker compose up -d
 ```
 
-Or without compose:
+`GHCR_TOKEN` is a [personal access token][pat] with `read:packages`. To
+update later, the whole thing is `docker compose pull && docker compose up -d`
+again — the card templates ship inside the image, so that one command moves
+the code and the templates together and they cannot drift apart.
+
+[pat]: https://github.com/settings/tokens?type=beta
+
+Building from source still works, for local development or if you'd rather
+not depend on the registry:
 
 ```sh
-docker build -t shenzhen-solitaire-solver-bot .
-docker run -d --restart unless-stopped \
-  -e TELEGRAM_BOT_TOKEN=... \
-  -v "$PWD/templates:/app/templates:ro" \
-  shenzhen-solitaire-solver-bot
+docker compose up -d --build
 ```
 
 The bot uses long polling, so it needs no inbound port, no reverse proxy and
@@ -85,6 +97,31 @@ keeps nothing on disk.
 
 Each worker pins a CPU core while it searches, which is why the default is 2
 rather than "as many as you have".
+
+## Releases
+
+Cutting one is what ships an image — nothing publishes on an ordinary merge
+to `main`.
+
+1. GitHub → **Releases** → **Draft a new release**.
+2. Pick a tag (create one), e.g. `v1.1.0`. Semantic versioning isn't enforced,
+   but is the natural fit: bump the middle number for a feature (the iPad
+   support, say), the last for a fix (the JPEG colour bug), the first only for
+   something that breaks how the bot is run or configured.
+3. Click **Generate release notes** — pulls in every merged PR since the last
+   tag, titled and linked. Edit if you want, or don't.
+4. **Publish release.**
+
+That triggers `.github/workflows/release.yml`: it rebuilds the image (same
+Dockerfile the CI `docker` job already validated on the PR), runs the same
+two smoke checks again — solves a deal, loads the card template bank — and
+only then pushes `ghcr.io/kaaburgh/shenzhen-solitaire-solver-bot` tagged with
+the release tag and with `latest`. Watch it under the repo's **Actions** tab;
+takes about a minute.
+
+A tag alone (`git tag v1.1.0 && git push origin v1.1.0`) does not trigger
+this — it has to go through **Publish release**, since that is the point
+where "this is a real release" gets decided.
 
 ## Typing a position out
 
@@ -151,9 +188,25 @@ The templates are cut from real screenshots, and rebuilding them is
 starts getting cards wrong.
 
 The bot always shows you the position it read and asks before spending time on
-it, and it names any card it is unsure about. Send the screenshot **as a file**
-rather than as a photo if you can: Telegram recompresses photos and the small
-glyphs smear.
+it, and it names any card it is unsure about.
+
+Send the screenshot **as a file**, not as a photo. This is not a nicety —
+Telegram scales a photo's long side down to about 1280px, and how much of the
+board survives that is a cliff, not a slope:
+
+| card width in the picture | cards read right | whole boards right |
+| --- | --- | --- |
+| ≥150px (a screenshot sent as a file) | 100% | 100% |
+| 120–149px | 99.4% | 81–92% |
+| 105–119px | 98.5% | 61% |
+| 90–104px (a phone screenshot sent as a photo) | 89.9% | 18% |
+| 75–89px | 77.8% | 0% |
+
+Measured by degrading the fixtures and reading them back against their known
+positions. Below roughly 150px the rank glyph is a handful of pixels across
+and a 3 stops being distinguishable from an 8 — no threshold fixes that, the
+detail is gone. The bot measures the card width it got and says so, rather
+than reporting the resulting impossible board as deck arithmetic.
 
 ## Rules
 
@@ -205,7 +258,7 @@ CI runs the suite on Python 3.11, 3.12 and 3.13, lints with ruff, and builds
 the image — then checks the built image can actually solve a deal and load its
 template bank, rather than only that the build exited zero.
 
-84 tests, about 13 seconds. They cover the rules (runs, dragons, autocollect,
+87 tests, about 12 seconds. They cover the rules (runs, dragons, autocollect,
 deck validation), the solver — including replaying every move of a returned
 solution against a fresh board to check it really wins — the text format, and
 the conversation flow against stand-ins for Telegram's objects.

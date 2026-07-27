@@ -78,6 +78,16 @@ STRINGS: dict[str, dict[str, str]] = {
             "Пришли скриншот целиком, без обрезки и без масштабирования, "
             "либо опиши расклад текстом — /help"
         ),
+        "image_rescaled": (
+            "Картинка уменьшена — карты всего {card_w} px в ширину, "
+            "и значки номиналов размылись настолько, что «3» уже не отличить "
+            "от «8».\n\n"
+            "Это Telegram сжимает то, что отправлено <b>фотографией</b>. "
+            "Пришли тот же скриншот <b>файлом</b>: скрепка → Файл (на телефоне "
+            "может называться «Документ»), и выбери его из галереи. "
+            "Тогда он дойдёт как есть и прочитается.\n\n"
+            "Либо опиши расклад текстом — /help"
+        ),
         "no_templates": (
             "Распознавание скриншотов на этом сервере ещё не настроено "
             "(нет банка шаблонов карт). Пришли расклад текстом — /help"
@@ -157,6 +167,16 @@ STRINGS: dict[str, dict[str, str]] = {
             "I could not read the picture: {reason}\n\n"
             "Send the full screenshot, uncropped and unscaled, or type the "
             "position out — /help"
+        ),
+        "image_rescaled": (
+            "The picture has been scaled down — the cards are only {card_w}px "
+            "wide, and the rank glyphs are blurred past the point where a 3 "
+            "can be told from an 8.\n\n"
+            "That is Telegram compressing anything sent as a <b>photo</b>. "
+            "Send the same screenshot <b>as a file</b> instead: the paperclip "
+            "→ File (your phone may call it Document), then pick it from the "
+            "gallery. It arrives untouched and reads fine.\n\n"
+            "Or type the position out — /help"
         ),
         "no_templates": (
             "Screenshot reading is not set up on this server (no card template "

@@ -28,7 +28,11 @@ from shenzhen.vision.layout import (
     detect_layout,
     find_dragon_buttons,
 )
-from shenzhen.vision.recognize import recognize
+from shenzhen.vision.recognize import (
+    MIN_RELIABLE_CARD_WIDTH,
+    RecognitionError,
+    recognize,
+)
 
 CONFIG = LayoutConfig()
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -258,3 +262,49 @@ def test_a_real_screenshot_reads_back_exactly(name, image_path, expected_path):
     assert not result.warnings, result.warnings
     unsure = [f"{r.where}={card_code(r.card)}" for r in result.uncertain]
     assert not unsure, unsure
+
+
+# --- screenshots Telegram has recompressed ---------------------------------
+
+
+def _as_telegram_photo(image, width=1280, quality=80):
+    """What Telegram does to a picture sent as a photo rather than a file:
+    scales the long side down to ~1280 and re-encodes it as JPEG."""
+    height = int(round(image.shape[0] * width / image.shape[1]))
+    scaled = cv2.resize(image, (width, height), interpolation=cv2.INTER_AREA)
+    ok, buffer = cv2.imencode(".jpg", scaled, [cv2.IMWRITE_JPEG_QUALITY, quality])
+    assert ok
+    return cv2.imdecode(buffer, cv2.IMREAD_COLOR)
+
+
+@pytest.mark.skipif(not BANK_PATH.is_dir(), reason="no template bank installed")
+def test_a_rescaled_screenshot_is_diagnosed_as_rescaled_not_as_a_bad_board():
+    """A phone screenshot sent as a photo comes back as a board that cannot
+    exist. Reporting the deck arithmetic ("missing G3x1, duplicated G8x1")
+    tells the user nothing they can act on; what they need to know is that the
+    picture arrived too small, which is fixed by sending it as a file."""
+    bank = TemplateBank.load(BANK_PATH)
+    original = cv2.imread(str(FIXTURES / "iphone" / "shot3.png"))
+    assert recognize(original, bank).state, "the original should read fine"
+
+    with pytest.raises(RecognitionError) as excinfo:
+        recognize(_as_telegram_photo(original), bank)
+
+    assert excinfo.value.likely_rescaled
+    assert excinfo.value.card_w is not None
+    assert excinfo.value.card_w < MIN_RELIABLE_CARD_WIDTH
+
+
+@pytest.mark.skipif(not BANK_PATH.is_dir(), reason="no template bank installed")
+def test_a_board_that_reads_but_came_in_small_is_flagged_for_checking():
+    """Between "reads perfectly" and "cannot possibly be right" there is a
+    band where most boards still come out correct. Those are not refused --
+    but the read carries a warning, which is what stops the bot treating it as
+    something it is sure of."""
+    bank = TemplateBank.load(BANK_PATH)
+    original = cv2.imread(str(FIXTURES / "ipad" / "shot1.png"))
+
+    result = recognize(_as_telegram_photo(original), bank)
+    assert result.state == parse_board((FIXTURES / "ipad" / "shot1.txt").read_text())
+    assert not result.confident
+    assert any("px wide" in w for w in result.warnings), result.warnings

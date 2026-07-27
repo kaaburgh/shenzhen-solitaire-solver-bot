@@ -145,6 +145,18 @@ Drop the screenshot and its board text into `tests/fixtures/<device>/` as
 `shotN.png` and `shotN.txt`. The suite picks up every pair it finds there and
 checks the reader still gets it exactly right.
 
+### 7. Ship it
+
+Commit the rebuilt bank and cut a release. The templates are baked into the
+image, so that is what puts them on a server — a deployment pulls the image
+and gets the bank belonging to that exact code.
+
+Nothing bind-mounts a bank over the image's own, deliberately: a deploy is
+`docker compose pull`, which never touches a checkout, so a mounted bank would
+quietly stay on the old templates while the code moved on. To try a bank
+before committing it, use a `docker-compose.override.yml` — see the comment in
+`docker-compose.yml`.
+
 ---
 
 ## Tuning notes
