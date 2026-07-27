@@ -17,7 +17,7 @@ import numpy as np
 import pytest
 from fake_board import OFFSET, render
 
-from shenzhen.cards import FULL_DECK, GREEN, RED, card_code, locked_cell, make_dragon
+from shenzhen.cards import BLACK, FULL_DECK, GREEN, RED, card_code, locked_cell, make_dragon
 from shenzhen.game import State, auto_resolve
 from shenzhen.textio import parse_board
 from shenzhen.vision.classify import TemplateBank, ink_colour
@@ -96,7 +96,7 @@ def test_a_picture_that_is_not_the_board_is_refused():
 
 
 def test_ink_colour_separates_the_three_suits():
-    from shenzhen.cards import BLACK, make_card
+    from shenzhen.cards import make_card
 
     state = raw_deal(1)
     image = render(state)
@@ -111,6 +111,36 @@ def test_ink_colour_separates_the_three_suits():
 
 def test_a_blank_crop_reads_as_no_card():
     assert ink_colour(np.full((40, 40, 3), (222, 232, 238), dtype=np.uint8)) is None
+
+
+def _solid_patch(height, width, bgr):
+    return np.full((height, width, 3), bgr, dtype=np.uint8)
+
+
+def test_ink_colour_survives_jpeg_style_desaturation():
+    """A screenshot sent to the bot as a compressed photo, not a file, showed
+    green ink at saturation ~44-58 where a clean PNG reads 90+ -- JPEG's
+    chroma subsampling throws away colour detail far more readily than
+    brightness detail, and a small glyph does not have much colour detail to
+    spare. Hue 62 / saturation 55 sits at the upper end of what was measured
+    on that screenshot, comfortably above COLOUR_SATURATION; the lowered
+    threshold is what full-fixture reads at the lower end depend on."""
+    patch = _solid_patch(30, 60, (222, 232, 238))
+    patch[8:22, 15:45] = (104, 130, 102)  # BGR for HSV (62, 55, 130)
+    assert ink_colour(patch) == GREEN
+
+
+def test_ink_colour_ignores_a_felt_sliver_at_the_box_edge():
+    """The same screenshot misread a black '2' as green, traced to the card's
+    detected box landing one pixel high and catching a sliver of green felt at
+    the crop's top edge. At the lowered saturation threshold above, that
+    sliver is exactly as 'coloured' as genuine washed-out ink -- it has to be
+    kept out by position, not by degree, which is what the edge margin in
+    ink_colour is for."""
+    patch = _solid_patch(30, 60, (222, 232, 238))
+    patch[0:1, :] = (51, 137, 69)  # BGR felt green: HSV hue 54, saturation 160
+    patch[8:22, 15:45] = (60, 60, 60)  # genuine black ink: dark, unsaturated
+    assert ink_colour(patch) == BLACK
 
 
 # --- free cells and foundations, on synthetic boards -----------------------

@@ -1,0 +1,11 @@
+free: DB B2 .
+flower: 0
+foundations: 0 2 0
+1: DR G1 DB G8 G2
+2: R8 R4 R3 DB
+3: DB B5 G3 B8 R6 G5
+4: G7 DR B6 DG R5
+5: R7 B7 G9
+6: F B1 DG R9 B9
+7: G6 DR DR
+8: B4 DG G4 B3 DG
