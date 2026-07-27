@@ -8,11 +8,37 @@ user has moved on.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from ..game import State
 from ..notation import DEFAULT_LANG  # noqa: F401  (re-exported as the fallback)
 from ..solver import SolveResult
+from ..vision.resolve import Resolution, Skeleton
+
+
+@dataclass
+class Pending:
+    """A screenshot part-way through being pinned down.
+
+    Everything needed to rebuild the board from a different set of answers,
+    and nothing else -- notably not the screenshot, which is why answering a
+    question costs no memory beyond the card scores already worked out.
+    """
+
+    skeleton: Skeleton
+    reads: list
+    resolution: Resolution
+    #: read index -> the card the user has told us it is
+    pinned: dict[int, int] = field(default_factory=dict)
+    #: which escalation level produced this reading.  Frozen for the whole
+    #: exchange so that the read indices in `pinned` keep meaning the same
+    #: thing between one question and the next.
+    level: int = 0
+    warnings: list[str] = field(default_factory=list)
+    #: how many shaky reads the deck settled by itself, for the closing note
+    deduced: int = 0
+    #: card width, when the picture came in under what reads reliably
+    narrow: int | None = None
 
 
 @dataclass
@@ -23,6 +49,8 @@ class Session:
     #: how many moves of the solution have already been shown
     shown: int = 0
     busy: bool = False
+    #: set while the bot is asking about cards it could not read
+    pending: Pending | None = None
 
 
 class Sessions:

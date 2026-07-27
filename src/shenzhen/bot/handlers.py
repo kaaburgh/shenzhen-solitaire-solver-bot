@@ -6,6 +6,7 @@ import asyncio
 import functools
 import html
 import logging
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
@@ -14,16 +15,20 @@ from telegram.ext import ContextTypes
 
 from ..cards import card_code
 from ..game import InvalidBoard, State
-from ..notation import LANGS, board_to_text, describe_steps, render_board
+from ..notation import LANGS, board_to_text, describe_slot, describe_steps, render_board
 from ..solver import SolveResult, Status, solve
 from ..textio import parse_board
 from ..vision import LayoutError, RecognitionError, TemplateBank, load_image, recognize
+from ..vision.resolve import Unresolvable, resolve, widest_options
 from .i18n import normalise_lang, t
-from .storage import Session, Sessions
+from .storage import Pending, Session, Sessions
 
 log = logging.getLogger(__name__)
 
 MOVES_PER_MESSAGE = 5
+
+#: card buttons per row when offering a question's answers
+OPTIONS_PER_ROW = 4
 
 
 @dataclass
@@ -91,7 +96,8 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await update.message.reply_text(t(session.lang, "bad_board", reason=str(exc)))
         return
 
-    await _accept_board(update, context, session, board, uncertain=[], warnings=[])
+    session.pending = None
+    await _accept_board(update.message, session, board, uncertain=[], warnings=[])
 
 
 async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -140,9 +146,33 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await message.reply_text(t(session.lang, "error", reason=str(exc)))
         return
 
+    session.pending = None
+    resolution = result.resolution
+
+    # Only the cards the deck could not pin down are worth a question, and
+    # only if there are few enough of them to be worth anyone's time.
+    if resolution is not None and resolution.open and resolution.interviewable:
+        session.pending = Pending(
+            skeleton=result.skeleton,
+            reads=result.reads,
+            resolution=resolution,
+            level=resolution.level,
+            warnings=result.warnings,
+            deduced=result.deduced,
+            narrow=result.narrow,
+        )
+        await _ask(message, session, intro=True)
+        return
+
     uncertain = [f"{r.where} = {card_code(r.card)}" for r in result.uncertain]
     await _accept_board(
-        update, context, session, result.state, uncertain=uncertain, warnings=result.warnings
+        message,
+        session,
+        result.state,
+        uncertain=uncertain,
+        warnings=result.warnings,
+        deduced=result.deduced,
+        narrow=result.narrow,
     )
 
 
@@ -150,14 +180,142 @@ def _recognize_bytes(data: bytes, bank: TemplateBank):
     return recognize(load_image(data), bank)
 
 
+# --- asking about cards the deck could not settle --------------------------
+
+
+def _option_rows(index: int, cards: Sequence[int]) -> list[list[InlineKeyboardButton]]:
+    rows = []
+    for start in range(0, len(cards), OPTIONS_PER_ROW):
+        rows.append(
+            [
+                InlineKeyboardButton(card_code(card), callback_data=f"pick:{index}:{card}")
+                for card in cards[start : start + OPTIONS_PER_ROW]
+            ]
+        )
+    return rows
+
+
+async def _ask(message, session: Session, *, intro: bool = False, edit=None) -> None:
+    """Put the next open card to the user, as buttons.
+
+    One question at a time on purpose.  Each answer is fed back through the
+    deck before the next question is chosen, and that usually settles the
+    others by elimination -- which is the difference between confirming one
+    card and confirming five.
+    """
+    pending = session.pending
+    resolution = pending.resolution
+    index = resolution.next_question()
+    if index is None:  # pragma: no cover -- guarded by the caller
+        return
+
+    read = pending.reads[index]
+    options = resolution.options(index)
+
+    lines = []
+    if intro:
+        lines.append(t(session.lang, "ask_intro"))
+        if pending.deduced:
+            lines.append(t(session.lang, "ask_deduced", n=pending.deduced))
+        lines.append("")
+    lines.append(t(session.lang, "ask_slot", slot=describe_slot(read.where, session.lang)))
+    remaining = len(resolution.open) - 1
+    if remaining:
+        lines.append(t(session.lang, "ask_left", n=remaining))
+
+    keyboard = InlineKeyboardMarkup(
+        _option_rows(index, options)
+        + [
+            [
+                InlineKeyboardButton(t(session.lang, "btn_other"), callback_data=f"wide:{index}"),
+                InlineKeyboardButton(t(session.lang, "btn_type"), callback_data="fix"),
+            ]
+        ]
+    )
+    send = edit or message.reply_text
+    await send("\n".join(lines), parse_mode=ParseMode.HTML, reply_markup=keyboard)
+
+
+async def _answer_question(query, session: Session, index: int, card: int) -> None:
+    """Take one answer, re-run the deck, and either ask again or show the board."""
+    pending = session.pending
+    pinned = dict(pending.pinned)
+    pinned[index] = card
+    try:
+        resolution = resolve(
+            pending.skeleton, pending.reads, pinned, level=pending.level
+        )
+    except Unresolvable:
+        # The answer is legal on its own but cannot coexist with the rest of
+        # the board, which means some other card is misread rather than this
+        # one.  Keep the earlier answers and let them try again.
+        await query.message.reply_text(t(session.lang, "ask_contradiction"))
+        return
+
+    pending.pinned = pinned
+    pending.resolution = resolution
+
+    if resolution.open and resolution.interviewable:
+        await _ask(session=session, message=query.message, edit=query.edit_message_text)
+        return
+
+    session.pending = None
+    uncertain = [
+        f"{pending.reads[i].where} = {card_code(resolution.options(i)[0])}"
+        for i in resolution.open
+    ]
+    await _accept_board(
+        query.message,
+        session,
+        resolution.state,
+        uncertain=uncertain,
+        warnings=pending.warnings,
+        # `settled` is recomputed from scratch and counts the answers just
+        # given as settled too -- they are, but the user gave them, so they do
+        # not belong in "cards I worked out for you".
+        deduced=len(resolution.settled) - len(pinned),
+        narrow=pending.narrow,
+    )
+
+
+async def _offer_everything(query, session: Session, index: int) -> None:
+    """Handle "none of these" by widening one card to all the deck allows.
+
+    A question's shortlist comes from how the templates scored, so a card the
+    matcher ranked badly will not be on it.  The deck still rules most of the
+    pack out, so what comes back is a handful of buttons rather than forty.
+    """
+    pending = session.pending
+    options = widest_options(
+        pending.skeleton, pending.reads, pending.pinned, index, level=pending.level
+    )
+    if not options:
+        await query.message.reply_text(t(session.lang, "ask_no_options"))
+        return
+
+    read = pending.reads[index]
+    lines = [
+        t(session.lang, "ask_slot", slot=describe_slot(read.where, session.lang)),
+        t(session.lang, "ask_other"),
+    ]
+    keyboard = InlineKeyboardMarkup(
+        _option_rows(index, options)
+        + [[InlineKeyboardButton(t(session.lang, "btn_type"), callback_data="fix")]]
+    )
+    await query.edit_message_text(
+        "\n".join(lines), parse_mode=ParseMode.HTML, reply_markup=keyboard
+    )
+
+
 async def _accept_board(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE,
+    message,
     session: Session,
     board: State,
     *,
     uncertain: list[str],
     warnings: list[str],
+    deduced: int = 0,
+    narrow: int | None = None,
 ) -> None:
     """Show the position back and ask for a nod before spending time on it."""
     session.board = board
@@ -165,10 +323,14 @@ async def _accept_board(
     session.shown = 0
 
     lines = [t(session.lang, "board_read"), _pre(render_board(board, session.lang))]
+    if deduced:
+        lines.append(t(session.lang, "ask_deduced", n=deduced))
     if uncertain:
         lines.append(t(session.lang, "uncertain", cards=", ".join(uncertain)))
     if warnings:
         lines.append(t(session.lang, "warnings", items="; ".join(warnings)))
+    if narrow is not None:
+        lines.append(t(session.lang, "board_narrow", card_w=narrow))
     lines.append(t(session.lang, "board_confirm"))
 
     keyboard = InlineKeyboardMarkup(
@@ -177,7 +339,7 @@ async def _accept_board(
             [InlineKeyboardButton(t(session.lang, "btn_fix"), callback_data="fix")],
         ]
     )
-    await update.message.reply_text(
+    await message.reply_text(
         "\n".join(lines), parse_mode=ParseMode.HTML, reply_markup=keyboard
     )
 
@@ -198,8 +360,30 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await query.edit_message_text(t(session.lang, "lang_set"))
         return
 
+    if data.startswith("pick:"):
+        await query.answer()
+        _, raw_index, raw_card = data.split(":", 2)
+        if session.pending is None:
+            await query.message.reply_text(t(session.lang, "ask_expired"))
+            return
+        await _answer_question(query, session, int(raw_index), int(raw_card))
+        return
+
+    if data.startswith("wide:"):
+        await query.answer()
+        if session.pending is None:
+            await query.message.reply_text(t(session.lang, "ask_expired"))
+            return
+        await _offer_everything(query, session, int(data.split(":", 1)[1]))
+        return
+
     if data == "fix":
         await query.answer()
+        # Bailing out of the questions and typing it out instead: the best
+        # reading so far is a better starting point than nothing.
+        if session.pending is not None:
+            session.board = session.pending.resolution.state
+            session.pending = None
         if session.board is None:
             await query.message.reply_text(t(session.lang, "no_board"))
             return

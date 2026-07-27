@@ -52,6 +52,45 @@ def _w(lang: str, key: str) -> str:
     return _WORDS.get(lang, _WORDS[DEFAULT_LANG])[key]
 
 
+_SLOTS = {
+    "ru": {
+        "column": "колонка {n}, {d}-я карта сверху",
+        "column_only": "колонка {n}, единственная карта",
+        "free": "свободная ячейка {n}",
+        "foundation": "фундамент, стопка {n}",
+        "flower": "слот цветка",
+    },
+    "en": {
+        "column": "column {n}, card {d} from the top",
+        "column_only": "column {n}, its only card",
+        "free": "free cell {n}",
+        "foundation": "foundation {n}",
+        "flower": "the flower slot",
+    },
+}
+
+
+def describe_slot(where: str, lang: str = DEFAULT_LANG, *, depth_total: int | None = None) -> str:
+    """Where on the screen a card sits, in words.
+
+    ``where`` is the internal tag the reader hands out -- ``"5.3"`` for the
+    third card of column five, ``"free2"``, ``"foundation1"``, ``"flower"``.
+    Said out loud so that a question about it can be answered by looking at
+    the game rather than at the bot's own notation.
+    """
+    words = _SLOTS.get(lang, _SLOTS[DEFAULT_LANG])
+    if where.startswith("free"):
+        return words["free"].format(n=where[4:])
+    if where.startswith("foundation"):
+        return words["foundation"].format(n=where[10:])
+    if where == "flower":
+        return words["flower"]
+    column, _, depth = where.partition(".")
+    if depth_total == 1:
+        return words["column_only"].format(n=column)
+    return words["column"].format(n=column, d=depth)
+
+
 def render_board(state: State, lang: str = DEFAULT_LANG) -> str:
     """A compact monospace picture of the position.
 

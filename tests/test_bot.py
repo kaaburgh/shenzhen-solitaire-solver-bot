@@ -11,6 +11,7 @@ import pytest
 from shenzhen.bot import handlers
 from shenzhen.bot.handlers import BotConfig
 from shenzhen.bot.storage import Sessions
+from shenzhen.cards import parse_card
 from shenzhen.game import deal
 from shenzhen.notation import board_to_text
 
@@ -245,3 +246,152 @@ async def test_a_rescaled_screenshot_is_explained_not_reported_as_deck_arithmeti
     assert "97" in body, body            # says how small it came in
     assert "файлом" in body, body        # says what to do about it
     assert "missing" not in body, body   # and not the deck arithmetic
+
+
+# --- asking about cards the deck could not settle --------------------------
+
+
+def _screenshot(unsure):
+    """A Recognition as `recognize` would have produced it for a board whose
+    named slots came out shaky.  Runs the real resolver, so what the handlers
+    get here is what they would get from a real picture."""
+    from test_resolve import AMBIGUOUS, screen
+
+    from shenzhen.vision.recognize import Recognition
+    from shenzhen.vision.resolve import resolve
+
+    view = screen(AMBIGUOUS, unsure=unsure)
+    resolution = resolve(view.skeleton, view.reads)
+    return view, Recognition(
+        state=resolution.state,
+        reads=view.reads,
+        skeleton=view.skeleton,
+        resolution=resolution,
+    )
+
+
+async def send_photo(context, log, recognition, monkeypatch):
+    context.application.bot_data["config"].bank = object()
+    message = FakeMessage(FakeChat(), log=log)
+    message.photo = [FakePhoto()]
+    monkeypatch.setattr(handlers, "_recognize_bytes", lambda _data, _bank: recognition)
+    await handlers.handle_image(FakeUpdate(message=message), context)
+
+
+def buttons(log):
+    keyboard = log[-1][1]["reply_markup"]
+    return [button.callback_data for row in keyboard.inline_keyboard for button in row]
+
+
+@pytest.mark.asyncio
+async def test_cards_the_deck_settles_are_never_asked_about(context, monkeypatch):
+    """Three shaky reads, none of which collide -- so the deck names all three
+    and the user is asked nothing at all."""
+    _, recognition = _screenshot({
+        "1.1": ["G1", "G5"],
+        "3.1": ["R2", "R7"],
+        "5.1": ["B3", "B8"],
+    })
+    log: list = []
+    await send_photo(context, log, recognition, monkeypatch)
+
+    body = texts(log)
+    assert "что там?" not in body, body
+    assert "1:" in body                      # went straight to the board
+    assert buttons(log) == ["solve", "fix"]
+    assert "подставил" in body, body         # and said it had filled them in
+
+
+@pytest.mark.asyncio
+async def test_one_open_card_is_put_as_a_question_with_the_answers_as_buttons(context, monkeypatch):
+    view, recognition = _screenshot({"1.3": ["G3", "G8"], "2.3": ["G8", "G3"]})
+    log: list = []
+    await send_photo(context, log, recognition, monkeypatch)
+
+    body = texts(log)
+    assert "что там?" in body, body
+    assert "колонка" in body, body           # says where to look, in words
+    picks = [b for b in buttons(log) if b.startswith("pick:")]
+    assert len(picks) == 2                   # G3 or G8, one tap either way
+    assert "wide:" in " ".join(buttons(log))
+    assert context.application.bot_data["sessions"].get(1).pending is not None
+
+
+@pytest.mark.asyncio
+async def test_answering_the_one_question_settles_the_rest_and_shows_the_board(context, monkeypatch):
+    view, recognition = _screenshot({"1.3": ["G3", "G8"], "2.3": ["G8", "G3"]})
+    log: list = []
+    await send_photo(context, log, recognition, monkeypatch)
+
+    answer = next(b for b in buttons(log) if b.startswith("pick:"))
+    await press(context, answer, log)
+
+    body = texts(log)
+    assert buttons(log) == ["solve", "fix"]  # done asking
+    assert "Всё верно?" in body
+    session = context.application.bot_data["sessions"].get(1)
+    assert session.pending is None
+    assert session.board == recognition.state
+
+
+@pytest.mark.asyncio
+async def test_none_of_these_widens_the_choice_instead_of_dead_ending(context, monkeypatch):
+    view, recognition = _screenshot({
+        "5.1": ["B3", "B4", "B5", "B6", "B7"],
+        "5.2": ["B4", "B3"],
+        "5.5": ["B7", "B3"],
+    })
+    log: list = []
+    await send_photo(context, log, recognition, monkeypatch)
+
+    offered = [b for b in buttons(log) if b.startswith("pick:")]
+    await press(context, next(b for b in buttons(log) if b.startswith("wide:")), log)
+    widened = [b for b in buttons(log) if b.startswith("pick:")]
+
+    assert set(offered) < set(widened), (offered, widened)
+
+
+@pytest.mark.asyncio
+async def test_an_answer_that_breaks_the_deck_is_refused_rather_than_accepted(context, monkeypatch):
+    view, recognition = _screenshot({"1.3": ["G3", "G8"], "2.3": ["G8", "G3"]})
+    log: list = []
+    await send_photo(context, log, recognition, monkeypatch)
+
+    session = context.application.bot_data["sessions"].get(1)
+    session.pinned = {}
+    # Force both slots to G3, which the deck cannot supply twice.
+    first, second = view.index_of("1.3"), view.index_of("2.3")
+    g3 = parse_card("G3")
+    session.pending.pinned = {first: g3}
+    await press(context, f"pick:{second}:{g3}", log)
+
+    assert "не сходится" in texts(log)
+    assert session.pending is not None       # earlier answers kept
+
+
+@pytest.mark.asyncio
+async def test_bailing_out_to_typing_keeps_the_best_reading_so_far(context, monkeypatch):
+    view, recognition = _screenshot({"1.3": ["G3", "G8"], "2.3": ["G8", "G3"]})
+    log: list = []
+    await send_photo(context, log, recognition, monkeypatch)
+    await press(context, "fix", log)
+
+    body = texts(log)
+    assert "free:" in body and "1:" in body   # something to edit, not nothing
+    assert context.application.bot_data["sessions"].get(1).pending is None
+
+
+@pytest.mark.asyncio
+async def test_the_users_own_answer_is_not_reported_back_as_deduced(context, monkeypatch):
+    """After answering, the closing note should count only what the deck
+    worked out -- not the card the user just supplied."""
+    view, recognition = _screenshot({"1.3": ["G3", "G8"], "2.3": ["G8", "G3"]})
+    log: list = []
+    await send_photo(context, log, recognition, monkeypatch)
+
+    await press(context, next(b for b in buttons(log) if b.startswith("pick:")), log)
+
+    # Two shaky cards, one answered by hand and one falling out of it: the
+    # note should either be absent or say one, never two.
+    body = texts(log)
+    assert "подставил" not in body or " 1 " in body, body
