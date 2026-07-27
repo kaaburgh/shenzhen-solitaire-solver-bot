@@ -187,9 +187,25 @@ The templates are cut from real screenshots, and rebuilding them is
 starts getting cards wrong.
 
 The bot always shows you the position it read and asks before spending time on
-it, and it names any card it is unsure about. Send the screenshot **as a file**
-rather than as a photo if you can: Telegram recompresses photos and the small
-glyphs smear.
+it, and it names any card it is unsure about.
+
+Send the screenshot **as a file**, not as a photo. This is not a nicety —
+Telegram scales a photo's long side down to about 1280px, and how much of the
+board survives that is a cliff, not a slope:
+
+| card width in the picture | cards read right | whole boards right |
+| --- | --- | --- |
+| ≥150px (a screenshot sent as a file) | 100% | 100% |
+| 120–149px | 99.4% | 81–92% |
+| 105–119px | 98.5% | 61% |
+| 90–104px (a phone screenshot sent as a photo) | 89.9% | 18% |
+| 75–89px | 77.8% | 0% |
+
+Measured by degrading the fixtures and reading them back against their known
+positions. Below roughly 150px the rank glyph is a handful of pixels across
+and a 3 stops being distinguishable from an 8 — no threshold fixes that, the
+detail is gone. The bot measures the card width it got and says so, rather
+than reporting the resulting impossible board as deck arithmetic.
 
 ## Rules
 
@@ -241,7 +257,7 @@ CI runs the suite on Python 3.11, 3.12 and 3.13, lints with ruff, and builds
 the image — then checks the built image can actually solve a deal and load its
 template bank, rather than only that the build exited zero.
 
-84 tests, about 13 seconds. They cover the rules (runs, dragons, autocollect,
+87 tests, about 12 seconds. They cover the rules (runs, dragons, autocollect,
 deck validation), the solver — including replaying every move of a returned
 solution against a fresh board to check it really wins — the text format, and
 the conversation flow against stand-ins for Telegram's objects.

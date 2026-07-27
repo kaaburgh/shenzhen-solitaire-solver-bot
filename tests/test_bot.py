@@ -56,6 +56,16 @@ class FakeMessage:
         return self
 
 
+class FakePhoto:
+    """The smallest stand-in `handle_image` will accept for a photo."""
+
+    async def get_file(self):
+        return self
+
+    async def download_as_bytearray(self):
+        return bytearray(b"not really a png")
+
+
 class FakeUser:
     def __init__(self, language_code: str = "ru") -> None:
         self.language_code = language_code
@@ -206,3 +216,32 @@ async def test_fix_hands_back_an_editable_position(context):
     await press(context, "fix", log)
     body = texts(log)
     assert "free:" in body and "foundations:" in body
+
+
+@pytest.mark.asyncio
+async def test_a_rescaled_screenshot_is_explained_not_reported_as_deck_arithmetic(
+    context, monkeypatch
+):
+    """What a user actually hit: a screenshot sent as a Telegram photo came
+    back as "missing G3x1, B3x1, B4x1; duplicated G8x1, B2x2, B7x1". That is
+    true and completely unactionable. The reply has to name the cause and the
+    fix instead."""
+    from shenzhen.vision.recognize import RecognitionError
+
+    def blow_up(_data, _bank):
+        raise RecognitionError(
+            "missing G3x1, B3x1, B4x1; duplicated G8x1, B2x2, B7x1", card_w=97
+        )
+
+    context.application.bot_data["config"].bank = object()  # any non-None bank
+    monkeypatch.setattr(handlers, "_recognize_bytes", blow_up)
+
+    log: list = []
+    message = FakeMessage(FakeChat(), log=log)
+    message.photo = [FakePhoto()]
+    await handlers.handle_image(FakeUpdate(message=message), context)
+
+    body = texts(log)
+    assert "97" in body, body            # says how small it came in
+    assert "файлом" in body, body        # says what to do about it
+    assert "missing" not in body, body   # and not the deck arithmetic

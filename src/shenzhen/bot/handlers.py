@@ -120,7 +120,19 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         result = await loop.run_in_executor(
             None, functools.partial(_recognize_bytes, data, config.bank)
         )
-    except (LayoutError, RecognitionError) as exc:
+    except RecognitionError as exc:
+        # A board that cannot exist usually means the picture was too small to
+        # read, not that it was the wrong picture -- and those two need
+        # completely different things from the user, so say which.
+        if exc.likely_rescaled:
+            await message.reply_text(
+                t(session.lang, "image_rescaled", card_w=exc.card_w),
+                parse_mode=ParseMode.HTML,
+            )
+        else:
+            await message.reply_text(t(session.lang, "bad_image", reason=str(exc)))
+        return
+    except LayoutError as exc:
         await message.reply_text(t(session.lang, "bad_image", reason=str(exc)))
         return
     except Exception as exc:  # pragma: no cover -- defensive

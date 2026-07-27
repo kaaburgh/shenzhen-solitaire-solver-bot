@@ -23,13 +23,46 @@ from ..game import NUM_COLUMNS, NUM_FREE_CELLS, InvalidBoard, State, auto_resolv
 from .classify import Guess, TemplateBank, classify
 from .layout import BoardLayout, Box, LayoutConfig, LayoutError, corner_patch, detect_layout
 
+# Below this card width the rank glyph is too few pixels across to tell apart
+# reliably -- 3 from 8, 6 from 2 -- whatever the thresholds are set to. Measured
+# by degrading the screenshot fixtures and reading them back against their known
+# positions:
+#
+#     card width   cards read right   whole boards right
+#     >= 150px           100%                100%
+#     120-149px          99.4%               81-92%
+#     105-119px          98.5%               61%
+#     90-104px           89.9%               18%
+#     75-89px            77.8%               0%
+#
+# A phone screenshot sent through Telegram as a photo rather than a file lands
+# around 97px, which is why it reads as a board that cannot exist rather than
+# as the board on screen.
+MIN_RELIABLE_CARD_WIDTH = 150
+
 
 class RecognitionError(RuntimeError):
     """The screenshot was read, but the result is not a legal position."""
 
-    def __init__(self, message: str, *, reads: list[ReadCard] | None = None) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        reads: list[ReadCard] | None = None,
+        card_w: int | None = None,
+    ) -> None:
         super().__init__(message)
         self.reads = reads or []
+        self.card_w = card_w
+
+    @property
+    def likely_rescaled(self) -> bool:
+        """Is the picture simply too small to read, rather than not a board?
+
+        Worth separating: one is answered by sending the screenshot as a file,
+        the other by sending a different picture.
+        """
+        return self.card_w is not None and self.card_w < MIN_RELIABLE_CARD_WIDTH
 
 
 @dataclass
@@ -84,6 +117,14 @@ def recognize(
     config = config or LayoutConfig()
     layout = detect_layout(image, config)
     warnings = list(layout.warnings)
+    if layout.card_w < MIN_RELIABLE_CARD_WIDTH:
+        # Not fatal on its own -- plenty of boards still read correctly here --
+        # but it makes `confident` false, so the bot asks rather than assumes.
+        warnings.append(
+            f"the cards are only {layout.card_w}px wide; below "
+            f"{MIN_RELIABLE_CARD_WIDTH}px the rank glyphs are too coarse to "
+            "read reliably, so check the position before trusting it"
+        )
     reads: list[ReadCard] = []
 
     def read(box: Box, where: str) -> ReadCard | None:
@@ -159,7 +200,7 @@ def recognize(
     try:
         validate(state)
     except InvalidBoard as exc:
-        raise RecognitionError(str(exc), reads=reads) from exc
+        raise RecognitionError(str(exc), reads=reads, card_w=layout.card_w) from exc
 
     settled, _ = auto_resolve(state)
     return Recognition(state=settled, reads=reads, warnings=warnings, layout=layout)
