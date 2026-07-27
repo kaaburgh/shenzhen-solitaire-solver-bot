@@ -70,7 +70,8 @@ docker compose up -d
 
 `GHCR_TOKEN` is a [personal access token][pat] with `read:packages`. To
 update later, the whole thing is `docker compose pull && docker compose up -d`
-again.
+again — the card templates ship inside the image, so that one command moves
+the code and the templates together and they cannot drift apart.
 
 [pat]: https://github.com/settings/tokens?type=beta
 

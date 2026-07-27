@@ -14,8 +14,12 @@ permissions:
   contents: read
   packages: write
 
+# One group for every release, deliberately not keyed on the tag: each run
+# moves the shared :latest tag, so two releases published close together must
+# queue rather than race. Keyed per tag they would run concurrently and the
+# slower build would win, leaving :latest pointing at the older release.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}
   cancel-in-progress: false # never cancel a half-pushed release
 
 env:
