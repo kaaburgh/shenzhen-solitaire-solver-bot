@@ -125,6 +125,23 @@ def standardise(patch: np.ndarray) -> np.ndarray:
     return resized
 
 
+#: below this saturation a pixel is not counted as coloured ink.  Low enough
+#: that green ink survives JPEG chroma subsampling -- which discards colour
+#: detail far more aggressively than brightness detail, so a small green
+#: glyph in a compressed screenshot can read barely more saturated than the
+#: cream card behind it even though the same glyph is unambiguous in a PNG.
+COLOUR_SATURATION = 50
+
+#: pixels this close to a crop's edge are excluded from ink_colour's stats.
+#: A card's box is occasionally off by a pixel -- more likely on a
+#: JPEG's softer edges -- and a sliver of green felt caught at the border
+#: reads as saturated ink. It is a thin minority of the crop, so leaving it
+#: out costs nothing; but at a low saturation threshold it is exactly as
+#: "coloured" as genuine but washed-out ink, so it has to be kept out
+#: geometrically rather than filtered by degree.
+EDGE_MARGIN = 1
+
+
 def ink_colour(patch: np.ndarray) -> int | None:
     """The colour the glyph is printed in, or ``None`` if the crop is blank.
 
@@ -133,6 +150,8 @@ def ink_colour(patch: np.ndarray) -> int | None:
     """
     if patch.ndim != 3:
         return None
+    if patch.shape[0] > 2 * EDGE_MARGIN and patch.shape[1] > 2 * EDGE_MARGIN:
+        patch = patch[EDGE_MARGIN:-EDGE_MARGIN, EDGE_MARGIN:-EDGE_MARGIN]
     hsv = cv2.cvtColor(patch, cv2.COLOR_BGR2HSV)
     hue, saturation, value = hsv[:, :, 0], hsv[:, :, 1], hsv[:, :, 2]
     minimum = max(6, patch.size // 400)
@@ -140,7 +159,7 @@ def ink_colour(patch: np.ndarray) -> int | None:
     # Coloured ink is picked out by saturation, not by brightness: red print
     # is barely darker than the cream card behind it, so a "darker than the
     # background" test misses it entirely.
-    coloured = (saturation > 90) & (value > 60)
+    coloured = (saturation > COLOUR_SATURATION) & (value > 60)
     if int(coloured.sum()) >= minimum:
         # Hue is circular, so average it as angles rather than as numbers.
         angles = hue[coloured].astype(np.float32) * (2 * np.pi / 180.0)

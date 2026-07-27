@@ -27,20 +27,31 @@ Answers in Russian or English (`/lang`).
 ## Status
 
 Working end to end, screenshots included. The card templates committed at
-`templates/default` were cut from the iOS app, and on eight real screenshots —
-iPhone and iPad, three board scales, covering a fresh deal, an early mid-game,
-collapsed dragons, a played flower, full free cells, a dead position and an
-endgame — all 284 cards are read correctly and confidently.
+`templates/default` were cut from the iOS app, and on nine real screenshots —
+iPhone and iPad, four board scales, covering a fresh deal, an early mid-game,
+collapsed dragons, a played flower, full free cells, a dead position, an
+endgame, and a JPEG compressed enough to wash out its ink colours — all 323
+cards are read correctly and confidently.
 
 The iPad was read by the geometry pass with no changes at all, which is what
 the resolution-independence was for: 4:3 instead of 21:9, a different window,
 cards half again as wide.
 
-The bank is built from three of those boards, so the other five are held-out:
+The bank is built from three of those boards, so the other six are held-out:
 they say the templates generalise rather than just fitting what they were cut
-from. Feeding all eight in raises the worst confidence from 0.77 to 0.82 but
-leaves the worst margin at 0.06 either way, which is not worth giving up the
-held-out evidence for.
+from. Feeding all nine in raises the worst confidence but leaves the worst
+margin about where it is, which is not worth giving up the held-out evidence
+for.
+
+The JPEG one is worth a mention: sent as a compressed photo rather than a
+file, it showed real green ink at saturation 40-58 -- a clean PNG reads 90+ --
+because JPEG's chroma subsampling throws away colour detail far more readily
+than brightness detail, and a small glyph doesn't have much colour detail to
+spare. Lowering the threshold to catch it exposed a second, smaller issue: a
+card whose detected box landed a pixel high caught a sliver of green felt at
+the crop's edge, which at the new threshold was exactly as "coloured" as
+genuine washed-out ink. Both are fixed in `ink_colour`
+(`src/shenzhen/vision/classify.py`) and pinned by dedicated tests.
 
 ## Running it
 
@@ -194,7 +205,7 @@ CI runs the suite on Python 3.11, 3.12 and 3.13, lints with ruff, and builds
 the image — then checks the built image can actually solve a deal and load its
 template bank, rather than only that the build exited zero.
 
-81 tests, about 12 seconds. They cover the rules (runs, dragons, autocollect,
+84 tests, about 13 seconds. They cover the rules (runs, dragons, autocollect,
 deck validation), the solver — including replaying every move of a returned
 solution against a fresh board to check it really wins — the text format, and
 the conversation flow against stand-ins for Telegram's objects.
