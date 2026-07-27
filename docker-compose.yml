@@ -1,7 +1,10 @@
 services:
   bot:
+    # Pulled by default -- `docker compose pull && docker compose up -d` is
+    # the whole deploy. `docker compose up -d --build` still works for local
+    # development; it just builds this same tag from source instead.
+    image: ghcr.io/kaaburgh/shenzhen-solitaire-solver-bot:latest
     build: .
-    image: shenzhen-solitaire-solver-bot:latest
     restart: unless-stopped
     env_file: .env
     environment:
