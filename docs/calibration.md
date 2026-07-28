@@ -167,6 +167,23 @@ template, and `MIN_MARGIN`, how far ahead of the runner-up that match has to
 be. On the committed fixtures every card is read well clear of both, so there
 is room to tighten them if a new bank turns out to be shakier.
 
-The one thing worth preserving: a card the bot is unsure about gets named back
-to you, and you can correct the position by typing it out. A card read wrongly
-in silence is much worse than a slow confirmation.
+Tightening them is cheaper than it looks, and that is deliberate. A card
+flagged unsure is not a question put to the user — it goes to the deck
+resolver first (`vision/resolve.py`), which usually names it by elimination
+and says nothing. So the cost of flagging a card that was actually fine is
+some search, not an interruption; the cost of *not* flagging one that was
+wrong is a wrong board. Err towards flagging.
+
+What the resolver needs from a flagged read is its ranking, and how far down
+that ranking to look is `LEVELS`. Those caps come from measuring where the
+true card actually lands on 155 unsure reads off degraded fixtures — top-4
+covers 97-100% once cards are 100px or wider, top-12 covers 98.7%, top-16
+covers everything seen. Rank rather than score, because the scores bunch up:
+even a window of 0.06 below the winner lets in a median of seven cards. If you
+rebuild the bank against different artwork, that measurement is the thing to
+redo before touching the numbers.
+
+The one thing worth preserving: a card the deck cannot pin down gets put to
+you as a question with the possible answers as buttons, and you can always
+fall back to typing the position out. A card read wrongly in silence is much
+worse than a tap.

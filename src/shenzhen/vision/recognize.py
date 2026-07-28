@@ -8,20 +8,10 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from ..cards import (
-    FLOWER,
-    SUITS,
-    card_code,
-    dragon_colour,
-    is_dragon,
-    is_suit_card,
-    locked_cell,
-    rank_of,
-    suit_of,
-)
-from ..game import NUM_COLUMNS, NUM_FREE_CELLS, InvalidBoard, State, auto_resolve, validate
+from ..game import NUM_COLUMNS, NUM_FREE_CELLS, State
 from .classify import Guess, TemplateBank, classify
 from .layout import BoardLayout, Box, LayoutConfig, LayoutError, corner_patch, detect_layout
+from .resolve import Resolution, Skeleton, Unresolvable, resolve
 
 # Below this card width the rank glyph is too few pixels across to tell apart
 # reliably -- 3 from 8, 6 from 2 -- whatever the thresholds are set to. Measured
@@ -73,6 +63,10 @@ class ReadCard:
     guess: Guess
     where: str
     box: Box
+    #: whether the deck resolver may second-guess this read.  False for the
+    #: flower slot, which can only ever hold the flower, so a shaky reading of
+    #: it is not a question worth putting to anyone.
+    resolvable: bool = True
 
     @property
     def confident(self) -> bool:
@@ -85,14 +79,45 @@ class Recognition:
     reads: list[ReadCard] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     layout: BoardLayout | None = None
+    #: how the board was arrived at, and what is still open about it.  Carried
+    #: so the bot can ask about the open cards and rebuild the board from the
+    #: answers without holding on to the screenshot.
+    skeleton: Skeleton | None = None
+    resolution: Resolution | None = None
 
     @property
     def uncertain(self) -> list[ReadCard]:
-        return [r for r in self.reads if not r.confident]
+        """Reads the deck did not pin down on its own.
+
+        Note this is not the same as the reads the classifier was unsure
+        about: most of those are settled by elimination and never reach here.
+        """
+        if self.resolution is None:
+            return [r for r in self.reads if not r.confident and r.resolvable]
+        open_indices = set(self.resolution.open)
+        return [self.reads[i] for i in sorted(open_indices)]
+
+    @property
+    def deduced(self) -> int:
+        """How many shaky reads the deck settled without needing to ask."""
+        return 0 if self.resolution is None else len(self.resolution.settled)
+
+    @property
+    def narrow(self) -> int | None:
+        """The card width, when it came in under what reads reliably.
+
+        Not fatal -- the deck settles most of these boards regardless, and one
+        it settles is proved rather than guessed.  But it is worth passing on,
+        so it is a number the caller can put in its own words rather than a
+        sentence of English in the middle of a Russian reply.
+        """
+        if self.layout is None or self.layout.card_w >= MIN_RELIABLE_CARD_WIDTH:
+            return None
+        return self.layout.card_w
 
     @property
     def confident(self) -> bool:
-        return not self.uncertain and not self.warnings
+        return not self.uncertain and not self.warnings and self.narrow is None
 
 
 def load_image(data: bytes) -> np.ndarray:
@@ -117,42 +142,38 @@ def recognize(
     config = config or LayoutConfig()
     layout = detect_layout(image, config)
     warnings = list(layout.warnings)
-    if layout.card_w < MIN_RELIABLE_CARD_WIDTH:
-        # Not fatal on its own -- plenty of boards still read correctly here --
-        # but it makes `confident` false, so the bot asks rather than assumes.
-        warnings.append(
-            f"the cards are only {layout.card_w}px wide; below "
-            f"{MIN_RELIABLE_CARD_WIDTH}px the rank glyphs are too coarse to "
-            "read reliably, so check the position before trusting it"
-        )
     reads: list[ReadCard] = []
 
-    def read(box: Box, where: str) -> ReadCard | None:
+    def read(box: Box, where: str, *, resolvable: bool = True) -> int | None:
+        """Classify one slot, returning its index in ``reads``."""
         patch = corner_patch(image, box, layout.card_w, config)
         guess = classify(patch, bank)
         if guess is None:
             return None
-        entry = ReadCard(card=guess.card, guess=guess, where=where, box=box)
-        reads.append(entry)
-        return entry
+        reads.append(
+            ReadCard(
+                card=guess.card, guess=guess, where=where, box=box, resolvable=resolvable
+            )
+        )
+        return len(reads) - 1
 
     # --- tableau ---------------------------------------------------------
     columns: list[tuple[int, ...]] = []
     for index, group in enumerate(layout.columns[:NUM_COLUMNS]):
-        cards: list[int] = []
+        found: list[int] = []
         for depth, box in enumerate(group):
             entry = read(box, f"{index + 1}.{depth + 1}")
             if entry is None:
                 warnings.append(f"column {index + 1}, card {depth + 1}: could not read the glyph")
                 continue
-            cards.append(entry.card)
-        columns.append(tuple(cards))
+            found.append(entry)
+        columns.append(tuple(found))
     while len(columns) < NUM_COLUMNS:
         columns.append(())
 
     # --- free cells ------------------------------------------------------
     # A cell locked by four collapsed dragons shows a card back, which the
-    # layout pass recognises; its colour is worked out further down, since
+    # layout pass recognises; its colour is worked out by the resolver, since
     # the back does not say which dragons went into it.
     free: list[int | None] = [None] * NUM_FREE_CELLS
     locked_slots: list[int] = []
@@ -162,86 +183,68 @@ def recognize(
         if layout.locked_cells[index]:
             locked_slots.append(index)
             continue
-        entry = read(box, f"free{index + 1}")
-        if entry is not None:
-            free[index] = entry.card
+        free[index] = read(box, f"free{index + 1}")
 
     # --- flower ----------------------------------------------------------
     # An empty flower slot is a watermark on the felt, too dim to show up as a
-    # card at all, so the slot holding anything means the flower is gone.
-    flower_collected = layout.flower is not None
+    # card at all, so the slot holding anything means the flower is gone.  The
+    # slot cannot hold anything else, so however the glyph reads there is
+    # nothing here to ask about.
     if layout.flower is not None:
-        read(layout.flower, "flower")
+        read(layout.flower, "flower", resolvable=False)
 
     # --- foundations -----------------------------------------------------
-    foundations = [0, 0, 0]
+    foundations: list[int | None] = [None, None, None]
     for index, box in enumerate(layout.foundations[:3]):
         if box is None:
             continue
-        entry = read(box, f"foundation{index + 1}")
-        if entry is None:
-            continue
-        if not is_suit_card(entry.card):
-            warnings.append(
-                f"foundation {index + 1}: read {card_code(entry.card)}, which cannot sit there"
-            )
-            continue
-        foundations[suit_of(entry.card)] = rank_of(entry.card)
+        foundations[index] = read(box, f"foundation{index + 1}")
 
-    _colour_locked_cells(columns, free, locked_slots, warnings)
-
-    state = State(
+    skeleton = Skeleton(
         columns=tuple(columns),
         free=tuple(free),
-        foundations=(foundations[0], foundations[1], foundations[2]),
-        flower=flower_collected or not _flower_on_table(columns, free),
+        locked=tuple(locked_slots),
+        flower_slot=layout.flower is not None,
+        foundations=tuple(foundations),
     )
 
     try:
-        validate(state)
-    except InvalidBoard as exc:
+        resolution = resolve(skeleton, reads)
+    except Unresolvable as exc:
         raise RecognitionError(str(exc), reads=reads, card_w=layout.card_w) from exc
 
-    settled, _ = auto_resolve(state)
-    return Recognition(state=settled, reads=reads, warnings=warnings, layout=layout)
-
-
-def _flower_on_table(columns: list[tuple[int, ...]], free: list[int | None]) -> bool:
-    return any(FLOWER in col for col in columns) or FLOWER in free
-
-
-def _colour_locked_cells(
-    columns: list[tuple[int, ...]],
-    free: list[int | None],
-    locked_slots: list[int],
-    warnings: list[str],
-) -> None:
-    """Work out which dragons went into each locked cell.
-
-    The card back a locked cell shows is the same whichever colour was
-    collapsed, so it has to be deduced: a colour is collapsed exactly when
-    none of its four dragons is anywhere on the board.
-    """
-    if not locked_slots:
-        return
-
-    visible = {colour: 0 for colour in SUITS}
-    for col in columns:
-        for card in col:
-            if is_dragon(card):
-                visible[dragon_colour(card)] += 1
-    for cell in free:
-        if cell is not None and is_dragon(cell):
-            visible[dragon_colour(cell)] += 1
-
-    collapsed = [colour for colour in SUITS if visible[colour] == 0]
-    if len(collapsed) != len(locked_slots):
-        warnings.append(
-            f"{len(locked_slots)} free cell(s) look collapsed, but "
-            f"{len(collapsed)} dragon colour(s) are missing from the board"
+    if resolution.truncated:
+        # The search stopped before it had seen every legal reading, so its
+        # best-scoring board is the pick of an arbitrary prefix rather than of
+        # the field.  Nothing about that is worth showing, at any card width:
+        # what makes a settled card trustworthy is having looked at all the
+        # alternatives, which is exactly what did not happen here.
+        raise RecognitionError(
+            "too many readings of this board survive to tell them apart",
+            reads=reads,
+            card_w=layout.card_w,
         )
-    for slot, colour in zip(locked_slots, collapsed):
-        free[slot] = locked_cell(colour)
+
+    if layout.card_w < MIN_RELIABLE_CARD_WIDTH and not resolution.interviewable:
+        # A picture this small is only worth trusting when the deck could
+        # check it -- and here it could not: too many cards are still open to
+        # be worth asking about one at a time.  Working through a dozen
+        # questions would cost the user more than resending the screenshot as
+        # a file, which fixes the cause rather than the symptom.
+        raise RecognitionError(
+            f"too many cards are unreadable at {layout.card_w}px to pin the board down",
+            reads=reads,
+            card_w=layout.card_w,
+        )
+
+    return Recognition(
+        state=resolution.state,
+        reads=reads,
+        warnings=warnings,
+        layout=layout,
+        skeleton=skeleton,
+        resolution=resolution,
+    )
 
 
 def load_bank(path: str | Path | None) -> TemplateBank | None:

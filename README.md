@@ -177,6 +177,36 @@ stays visible under another card. Ink colour settles the suit on its own
 (green and red print are found by saturation, black by darkness) and template
 matching picks the rank within it.
 
+The **deck** settles what is left. Every card in a Shenzhen deck is unique —
+each of the 27 suit cards exists exactly once, and a board holds all forty —
+so a card the matcher cannot call is usually not an open question at all: it
+is whatever the other thirty-nine leave over. Each unsure read becomes a
+variable with a shortlist of candidates, every combination is checked against
+the deck, and what survives is the set of boards the picture could be showing.
+A card they all agree on is filled in silently; only a card they disagree
+about is put to you, one tap to answer.
+
+That is most of the work. Squeeze the fixtures until cards start coming out
+shaky and every one of the nine still reads back exactly right with **nothing
+asked** — the elimination covers all of it. Push further and the questions
+start, but they stay cheap, because each answer is fed back through the deck
+before the next question is chosen: pinning one of two slots that might be the
+3 or the 8 pins the other one too. Worst case across the degraded fixtures was
+two questions.
+
+Being the only legal reading is not by itself proof, though — a shortlist that
+cannot see the true card can have exactly one survivor and still be wrong. So
+the board never comes from the first shortlist that works: whichever level
+finds an answer, the answer is taken from one level wider, where the truth is
+in reach and a disagreement turns into a question rather than a silent
+mistake.
+
+When even that cannot close — too many cards unreadable for the elimination to
+bite — the bot says so and asks for the screenshot as a file, rather than
+offering the likeliest of several hundred boards. Below the reliable width,
+the deck is what earns a picture its trust; a board it cannot check is not one
+worth showing you.
+
 A free cell holding four collapsed dragons shows a patterned back rather than
 a dragon face; it is told apart by that pattern being about half green against
 a card face's ~1%. The back does not say which dragons went into it, so that
@@ -188,7 +218,7 @@ The templates are cut from real screenshots, and rebuilding them is
 starts getting cards wrong.
 
 The bot always shows you the position it read and asks before spending time on
-it, and it names any card it is unsure about.
+it, and it names any card it is still unsure about.
 
 Send the screenshot **as a file**, not as a photo. This is not a nicety —
 Telegram scales a photo's long side down to about 1280px, and how much of the
@@ -203,10 +233,18 @@ board survives that is a cliff, not a slope:
 | 75–89px | 77.8% | 0% |
 
 Measured by degrading the fixtures and reading them back against their known
-positions. Below roughly 150px the rank glyph is a handful of pixels across
-and a 3 stops being distinguishable from an 8 — no threshold fixes that, the
-detail is gone. The bot measures the card width it got and says so, rather
-than reporting the resulting impossible board as deck arithmetic.
+positions, per card and before the deck gets a say. Below roughly 150px the
+rank glyph is a handful of pixels across and a 3 stops being distinguishable
+from an 8 — no threshold fixes that, the detail is gone. The bot measures the
+card width it got and says so, rather than reporting the resulting impossible
+board as deck arithmetic.
+
+Whole boards do much better than that table suggests, because the deck
+recovers cards the matcher gets wrong: the 120–149px row reads 81–92% of
+boards correctly card-by-card, but every fixture in that band comes out exact
+after elimination. What the table still governs is where the recovery stops —
+by around 100px too many cards are gone at once for the remaining ones to pin
+them, which is the point at which the bot asks for a file instead.
 
 ## Rules
 
@@ -258,10 +296,16 @@ CI runs the suite on Python 3.11, 3.12 and 3.13, lints with ruff, and builds
 the image — then checks the built image can actually solve a deal and load its
 template bank, rather than only that the build exited zero.
 
-87 tests, about 12 seconds. They cover the rules (runs, dragons, autocollect,
+119 tests, about 18 seconds. They cover the rules (runs, dragons, autocollect,
 deck validation), the solver — including replaying every move of a returned
 solution against a fresh board to check it really wins — the text format, and
 the conversation flow against stand-ins for Telegram's objects.
+
+The deck resolver is tested on made-up reads rather than screenshots
+(`tests/test_resolve.py`): saying "this slot scored G3 first and G8 second"
+outright is both clearer and more pointed than hunting for a real picture that
+happens to be ambiguous in the right place. Its screenshot end is covered by
+degrading the fixtures and checking they still come back exact.
 
 The vision pipeline is tested on two levels. `tests/fixtures/` holds real
 screenshots with the position written out beside them, and reading each one
@@ -279,6 +323,6 @@ src/shenzhen/
   solver.py     the search
   notation.py   rendering boards and moves, ru/en
   textio.py     parsing a typed position
-  vision/       layout.py, classify.py, recognize.py, calibrate.py
+  vision/       layout.py, classify.py, resolve.py, recognize.py, calibrate.py
   bot/          main.py, handlers.py, i18n.py, storage.py
 ```
