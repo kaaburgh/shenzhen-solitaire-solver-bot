@@ -61,10 +61,19 @@ class Guess:
     #: whole bank rather than the ink colour's shortlist because a misread
     #: glyph sometimes takes its colour down with it.
     ranking: tuple[tuple[int, float], ...] = ()
+    #: whether the ink colour was a clear-cut call.  A glyph matched against
+    #: the wrong colour's templates can win its shortlist by a mile and still
+    #: be the wrong card, so a shaky colour has to survive as doubt about the
+    #: whole read rather than being resolved into a confident mistake.
+    colour_certain: bool = True
 
     @property
     def is_confident(self) -> bool:
-        return self.confidence >= MIN_CONFIDENCE and self.margin >= MIN_MARGIN
+        return (
+            self.colour_certain
+            and self.confidence >= MIN_CONFIDENCE
+            and self.margin >= MIN_MARGIN
+        )
 
 
 class TemplateBank:
@@ -138,47 +147,77 @@ def standardise(patch: np.ndarray) -> np.ndarray:
 #: cream card behind it even though the same glyph is unambiguous in a PNG.
 COLOUR_SATURATION = 50
 
-#: pixels this close to a crop's edge are excluded from ink_colour's stats.
-#: A card's box is occasionally off by a pixel -- more likely on a
-#: JPEG's softer edges -- and a sliver of green felt caught at the border
-#: reads as saturated ink. It is a thin minority of the crop, so leaving it
-#: out costs nothing; but at a low saturation threshold it is exactly as
-#: "coloured" as genuine but washed-out ink, so it has to be kept out
-#: geometrically rather than filtered by degree.
-EDGE_MARGIN = 1
+#: how much of a crop's border is excluded from the ink statistics, as a
+#: fraction of each side, and never less than a pixel.  A card's box is
+#: occasionally off by one -- more likely on a JPEG's softer edges -- and a
+#: sliver of green felt caught at the border reads as saturated ink. It is a
+#: thin minority of the crop, so leaving it out costs nothing; but at a low
+#: saturation threshold it is exactly as "coloured" as genuine but washed-out
+#: ink, so it has to be kept out geometrically rather than filtered by degree.
+#: A fraction rather than a pixel count because enlarging the picture spreads
+#: that one-pixel sliver over as many pixels as it spreads everything else.
+EDGE_MARGIN = 0.04
+
+#: this fraction of a crop has to read as coloured ink before its glyph is
+#: called green or red rather than black.  A fraction rather than a pixel
+#: count so that the same call comes out of the same card whatever size it is
+#: drawn at -- enlarging a picture must not be able to change its colours.
+COLOUR_FRACTION = 0.0075
+
+#: how far either side of that the reading is too close to call.  Both kinds
+#: of mistake live in this band and nowhere else: washed-out green ink on a
+#: twice-compressed screenshot ends up just under the line, and the chroma
+#: fringing along the white dragon's black rectangle ends up just over it.
+#: Neither is worth trying to separate by tightening the threshold -- there is
+#: no value that has them on opposite sides.  What they have in common is that
+#: the deck settles both, given they are handed on as doubt rather than
+#: swallowed as a decision.
+COLOUR_UNCERTAIN = 2.0
 
 
-def ink_colour(patch: np.ndarray) -> int | None:
-    """The colour the glyph is printed in, or ``None`` if the crop is blank.
+def ink_reading(patch: np.ndarray) -> tuple[int | None, bool]:
+    """The colour the glyph is printed in, and whether that was clear-cut.
 
-    A blank crop means an empty slot, which the caller needs to distinguish
-    from a card it simply failed to read.
+    ``None`` means the crop is blank -- an empty slot, which the caller needs
+    to distinguish from a card it simply failed to read.
     """
     if patch.ndim != 3:
-        return None
-    if patch.shape[0] > 2 * EDGE_MARGIN and patch.shape[1] > 2 * EDGE_MARGIN:
-        patch = patch[EDGE_MARGIN:-EDGE_MARGIN, EDGE_MARGIN:-EDGE_MARGIN]
+        return None, True
+    height, width = patch.shape[:2]
+    margin_y = max(1, round(height * EDGE_MARGIN))
+    margin_x = max(1, round(width * EDGE_MARGIN))
+    if height > 2 * margin_y and width > 2 * margin_x:
+        patch = patch[margin_y:-margin_y, margin_x:-margin_x]
     hsv = cv2.cvtColor(patch, cv2.COLOR_BGR2HSV)
     hue, saturation, value = hsv[:, :, 0], hsv[:, :, 1], hsv[:, :, 2]
-    minimum = max(6, patch.size // 400)
+    pixels = patch.shape[0] * patch.shape[1]
+    minimum = max(6, COLOUR_FRACTION * pixels)
 
     # Coloured ink is picked out by saturation, not by brightness: red print
     # is barely darker than the cream card behind it, so a "darker than the
     # background" test misses it entirely.
     coloured = (saturation > COLOUR_SATURATION) & (value > 60)
-    if int(coloured.sum()) >= minimum:
+    found = int(coloured.sum())
+    certain = not minimum / COLOUR_UNCERTAIN <= found <= minimum * COLOUR_UNCERTAIN
+
+    if found >= minimum:
         # Hue is circular, so average it as angles rather than as numbers.
         angles = hue[coloured].astype(np.float32) * (2 * np.pi / 180.0)
         mean_hue = (
             np.degrees(np.arctan2(np.sin(angles).mean(), np.cos(angles).mean())) / 2.0
         ) % 180.0
-        return GREEN if 25.0 <= mean_hue <= 95.0 else RED
+        return (GREEN if 25.0 <= mean_hue <= 95.0 else RED), certain
 
     # Nothing saturated: either black print, or an empty slot.
     dark = value < float(value.mean()) * 0.78
     if int(dark.sum()) >= minimum:
-        return BLACK
-    return None
+        return BLACK, certain
+    return None, True
+
+
+def ink_colour(patch: np.ndarray) -> int | None:
+    """The colour the glyph is printed in, or ``None`` if the crop is blank."""
+    return ink_reading(patch)[0]
 
 
 def candidates_for_colour(colour: int | None) -> tuple[int, ...]:
@@ -191,7 +230,12 @@ def candidates_for_colour(colour: int | None) -> tuple[int, ...]:
     return tuple(c for c in _ALL_CARDS if c == FLOWER or colour_of(c) == colour)
 
 
-def match(patch: np.ndarray, bank: TemplateBank, colour: int | None = None) -> Guess | None:
+def match(
+    patch: np.ndarray,
+    bank: TemplateBank,
+    colour: int | None = None,
+    colour_certain: bool = True,
+) -> Guess | None:
     """Best template for ``patch``, restricted to one ink colour if known.
 
     Every template is scored, but the winner and its margin are decided within
@@ -229,12 +273,13 @@ def match(patch: np.ndarray, bank: TemplateBank, colour: int | None = None) -> G
         margin=best_score - runner_up,
         colour=colour,
         ranking=ranking,
+        colour_certain=colour_certain,
     )
 
 
 def classify(patch: np.ndarray, bank: TemplateBank) -> Guess | None:
     """Read one card crop.  ``None`` means the crop is blank -- an empty slot."""
-    colour = ink_colour(patch)
+    colour, certain = ink_reading(patch)
     if colour is None:
         return None
-    return match(patch, bank, colour)
+    return match(patch, bank, colour, certain)

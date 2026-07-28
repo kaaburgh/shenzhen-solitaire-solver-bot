@@ -27,19 +27,21 @@ Answers in Russian or English (`/lang`).
 ## Status
 
 Working end to end, screenshots included. The card templates committed at
-`templates/default` were cut from the iOS app, and on nine real screenshots —
+`templates/default` were cut from the iOS app, and on ten real screenshots —
 iPhone and iPad, four board scales, covering a fresh deal, an early mid-game,
 collapsed dragons, a played flower, full free cells, a dead position, an
-endgame, and a JPEG compressed enough to wash out its ink colours — all 323
-cards are read correctly and confidently.
+endgame, a JPEG compressed enough to wash out its ink colours, and one that
+came back out of Telegram as a photo — all 363 cards are read correctly. Three
+of them, all on the Telegram one, are read without confidence and settled by
+the deck; the other 360 the matcher calls outright.
 
 The iPad was read by the geometry pass with no changes at all, which is what
 the resolution-independence was for: 4:3 instead of 21:9, a different window,
 cards half again as wide.
 
-The bank is built from three of those boards, so the other six are held-out:
+The bank is built from three of those boards, so the other seven are held-out:
 they say the templates generalise rather than just fitting what they were cut
-from. Feeding all nine in raises the worst confidence but leaves the worst
+from. Feeding the rest in raises the worst confidence but leaves the worst
 margin about where it is, which is not worth giving up the held-out evidence
 for.
 
@@ -195,7 +197,7 @@ A card they all agree on is filled in silently; only a card they disagree
 about is put to you, one tap to answer.
 
 That is most of the work. Squeeze the fixtures until cards start coming out
-shaky and every one of the nine still reads back exactly right with **nothing
+shaky and every one of them still reads back exactly right with **nothing
 asked** — the elimination covers all of it. Push further and the questions
 start, but they stay cheap, because each answer is fed back through the deck
 before the next question is chosen: pinning one of two slots that might be the
@@ -210,10 +212,10 @@ in reach and a disagreement turns into a question rather than a silent
 mistake.
 
 When even that cannot close — too many cards unreadable for the elimination to
-bite — the bot says so and asks for the screenshot as a file, rather than
-offering the likeliest of several hundred boards. Below the reliable width,
-the deck is what earns a picture its trust; a board it cannot check is not one
-worth showing you.
+bite — there is no board to show, but there is still a reading, and most of
+its forty cards are right. That comes back written out in the text notation
+for you to correct the handful that are not, which beats both retyping the
+position and being sent away for a better screenshot.
 
 A free cell holding four collapsed dragons shows a patterned back rather than
 a dragon face; it is told apart by that pattern being about half green against
@@ -228,31 +230,44 @@ starts getting cards wrong.
 The bot always shows you the position it read and asks before spending time on
 it, and it names any card it is still unsure about.
 
-Send the screenshot **as a file**, not as a photo. This is not a nicety —
-Telegram scales a photo's long side down to about 1280px, and how much of the
-board survives that is a cliff, not a slope:
+### Screenshots sent as photos
 
-| card width in the picture | cards read right | whole boards right |
-| --- | --- | --- |
-| ≥150px (a screenshot sent as a file) | 100% | 100% |
-| 120–149px | 99.4% | 81–92% |
-| 105–119px | 98.5% | 61% |
-| 90–104px (a phone screenshot sent as a photo) | 89.9% | 18% |
-| 75–89px | 77.8% | 0% |
+Telegram scales a photo's long side down to about 1280px, which puts the cards
+around 97px wide, and how much of the board survives that used to be a cliff
+rather than a slope:
+
+| card width in the picture | cards read right |
+| --- | --- |
+| ≥150px (a screenshot sent as a file) | 100% |
+| 120–149px | 99.4% |
+| 105–119px | 98.5% |
+| 90–104px (a phone screenshot sent as a photo) | 89.9% |
+| 75–89px | 77.8% |
 
 Measured by degrading the fixtures and reading them back against their known
-positions, per card and before the deck gets a say. Below roughly 150px the
-rank glyph is a handful of pixels across and a 3 stops being distinguishable
-from an 8 — no threshold fixes that, the detail is gone. The bot measures the
-card width it got and says so, rather than reporting the resulting impossible
-board as deck arithmetic.
+positions, per card and before the deck gets a say. At the bottom of that
+table a rank glyph is ten pixels tall and a 3 stops being distinguishable from
+an 8 — and yet most of the loss was not the missing detail. It was
+registration. Every crop is cut on integer pixels off a lattice fitted to the
+columns, so at 97px the glyph lands up to half a pixel away from where the
+templates expect it, which on a ten-pixel glyph is a lot of the glyph.
 
-Whole boards do much better than that table suggests, because the deck
-recovers cards the matcher gets wrong: the 120–149px row reads 81–92% of
-boards correctly card-by-card, but every fixture in that band comes out exact
-after elimination. What the table still governs is where the recovery stops —
-by around 100px too many cards are gone at once for the remaining ones to pin
-them, which is the point at which the bot asks for a file instead.
+So the reader enlarges a small picture by a whole-number factor before looking
+at it, which divides that error by the factor and costs the picture nothing.
+It adds no information — a blurred 3 stays a blurred 3 — but across the
+fixtures as Telegram delivers them it takes cards read right from 89.0% to
+99.1%, and boards read exactly from three in ten to ten in ten, with nothing
+left to ask about. The three cards still misread are all settled by the deck.
+
+Bilinear and whole-number, both measured rather than assumed: bicubic's
+overshoot sharpens JPEG ringing into strokes that are not there, nearest
+preserves the very error the enlargement is meant to remove, and a fractional
+resize beats against the original grid so which cards it smears depends on
+where they happen to sit.
+
+Sending the screenshot **as a file** still avoids all of this — it arrives
+untouched — and it is what /help suggests when a card does come out wrong. It
+is no longer a requirement.
 
 ## Rules
 
