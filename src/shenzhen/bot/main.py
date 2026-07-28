@@ -37,6 +37,14 @@ from .storage import Sessions
 
 log = logging.getLogger("shenzhen.bot")
 
+#: /help asks for the screenshot as a file, so every file has to reach the
+#: handler.  ``filters.Document.IMAGE`` is not enough: it goes by mime type,
+#: and a phone sending a screenshot as a file frequently labels it
+#: ``application/octet-stream`` or ships no type at all, so those updates
+#: matched no handler and the bot answered nothing.  Sorting out what is
+#: actually a picture is `handlers.looks_like_image`'s job.
+PICTURES = filters.PHOTO | filters.Document.ALL
+
 
 def build_application(token: str) -> Application:
     bank_path = os.environ.get("SHENZHEN_TEMPLATES", "templates/default")
@@ -87,12 +95,11 @@ def build_application(token: str) -> Application:
     application.add_handler(CommandHandler("help", handlers.help_command))
     application.add_handler(CommandHandler("lang", handlers.lang_command))
     application.add_handler(CallbackQueryHandler(handlers.on_callback))
-    application.add_handler(
-        MessageHandler(filters.PHOTO | filters.Document.IMAGE, handlers.handle_image)
-    )
+    application.add_handler(MessageHandler(PICTURES, handlers.handle_image))
     application.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.handle_text)
     )
+    application.add_error_handler(handlers.on_error)
     return application
 
 
