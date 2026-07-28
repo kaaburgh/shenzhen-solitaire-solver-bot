@@ -190,16 +190,19 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             None, functools.partial(_recognize_bytes, data, config.bank)
         )
     except RecognitionError as exc:
-        # A board that cannot exist usually means the picture was too small to
-        # read, not that it was the wrong picture -- and those two need
-        # completely different things from the user, so say which.
-        if exc.likely_rescaled:
-            await message.reply_text(
-                t(session.lang, "image_rescaled", card_w=exc.card_w),
-                parse_mode=ParseMode.HTML,
-            )
-        else:
+        # The picture is a board, it just did not come out as one that could
+        # exist. Nothing here is worth throwing away: most of the forty cards
+        # will be right, so hand the reading back for the user to correct
+        # rather than asking them for a better screenshot.
+        draft = exc.draft
+        if draft is None:
             await message.reply_text(t(session.lang, "bad_image", reason=str(exc)))
+            return
+        lines = [t(session.lang, "bad_reading", reason=str(exc))]
+        if exc.narrow:
+            lines.append(t(session.lang, "bad_reading_narrow", card_w=exc.card_w))
+        lines.append(_pre(draft))
+        await message.reply_text("\n".join(lines), parse_mode=ParseMode.HTML)
         return
     except LayoutError as exc:
         await message.reply_text(t(session.lang, "bad_image", reason=str(exc)))

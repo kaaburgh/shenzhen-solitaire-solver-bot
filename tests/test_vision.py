@@ -9,7 +9,9 @@ them, and those are what say the thresholds suit the real thing.
 
 from __future__ import annotations
 
+import importlib
 import random
+from collections import Counter
 from pathlib import Path
 
 import cv2
@@ -17,8 +19,17 @@ import numpy as np
 import pytest
 from fake_board import OFFSET, render
 
-from shenzhen.cards import BLACK, FULL_DECK, GREEN, RED, card_code, locked_cell, make_dragon
-from shenzhen.game import State, auto_resolve
+from shenzhen.cards import (
+    BLACK,
+    FULL_DECK,
+    GREEN,
+    RED,
+    card_code,
+    locked_cell,
+    make_dragon,
+    parse_card,
+)
+from shenzhen.game import NUM_COLUMNS, InvalidBoard, State, auto_resolve
 from shenzhen.textio import parse_board
 from shenzhen.vision.classify import TemplateBank, ink_colour
 from shenzhen.vision.layout import (
@@ -37,6 +48,11 @@ from shenzhen.vision.recognize import (
 CONFIG = LayoutConfig()
 FIXTURES = Path(__file__).parent / "fixtures"
 BANK_PATH = Path(__file__).parent.parent / "templates" / "default"
+
+#: the module itself, for the one test that has to reach a constant inside it.
+#: ``shenzhen.vision`` re-exports the ``recognize`` function under the name of
+#: the module it lives in, so plain attribute access finds the function.
+RECOGNIZE = importlib.import_module("shenzhen.vision.recognize")
 
 
 def raw_deal(seed: int) -> State:
@@ -231,8 +247,14 @@ def test_the_offset_falls_back_when_nothing_is_stacked():
 
 
 def _fixtures() -> list[tuple[str, Path, Path]]:
+    """Every screenshot with its position written out beside it.
+
+    ``.png`` fixtures are untouched originals, straight off the device.
+    ``.jpg`` ones came back out of Telegram and are already scaled and
+    recompressed, so nothing here may squeeze them a second time.
+    """
     found = []
-    for image in sorted(FIXTURES.glob("*/*.png")):
+    for image in sorted(FIXTURES.glob("*/*.png")) + sorted(FIXTURES.glob("*/*.jpg")):
         expected = image.with_suffix(".txt")
         if expected.exists():
             found.append((f"{image.parent.name}/{image.stem}", image, expected))
@@ -277,22 +299,59 @@ def _as_telegram_photo(image, width=1280, quality=80):
     return cv2.imdecode(buffer, cv2.IMREAD_COLOR)
 
 
+def _as_sent(image_path, image, width=1280):
+    """The fixture as it would arrive, without compressing anything twice."""
+    if image_path.suffix == ".jpg":
+        return image
+    return _as_telegram_photo(image, width)
+
+
 @pytest.mark.skipif(not BANK_PATH.is_dir(), reason="no template bank installed")
-def test_a_rescaled_screenshot_is_diagnosed_as_rescaled_not_as_a_bad_board():
-    """A phone screenshot sent as a photo comes back as a board that cannot
-    exist. Reporting the deck arithmetic ("missing G3x1, duplicated G8x1")
-    tells the user nothing they can act on; what they need to know is that the
-    picture arrived too small, which is fixed by sending it as a file."""
+@pytest.mark.parametrize(
+    "name,image_path,expected_path", FIXTURE_CASES, ids=lambda v: v if isinstance(v, str) else ""
+)
+def test_a_screenshot_sent_as_a_photo_reads_back_exactly(name, image_path, expected_path):
+    """The case the bot actually gets. Sending a screenshot as a file is what
+    /help asks for, and hardly anybody does it -- an ordinary photo comes
+    through scaled to 1280px, which puts the cards around 97px wide and the
+    rank glyphs below the size a template match can call.
+
+    Every fixture still reads back exactly, and with nothing left to ask
+    about: the picture is enlarged before it is read, which recovers the
+    registration the scaling cost, and the deck settles the few cards that
+    stay shaky."""
     bank = TemplateBank.load(BANK_PATH)
-    original = cv2.imread(str(FIXTURES / "iphone" / "shot3.png"))
-    assert recognize(original, bank).state, "the original should read fine"
+    original = cv2.imread(str(image_path))
+    assert original is not None, f"could not read {image_path}"
 
-    with pytest.raises(RecognitionError) as excinfo:
-        recognize(_as_telegram_photo(original), bank)
+    result = recognize(_as_sent(image_path, original), bank)
 
-    assert excinfo.value.likely_rescaled
-    assert excinfo.value.card_w is not None
-    assert excinfo.value.card_w < MIN_RELIABLE_CARD_WIDTH
+    assert result.state == parse_board(expected_path.read_text(encoding="utf-8")), name
+    assert result.uncertain == [], [r.where for r in result.uncertain]
+    assert result.narrow is not None, "the point of the fixture is that it is small"
+    assert result.narrow < MIN_RELIABLE_CARD_WIDTH
+
+
+@pytest.mark.skipif(not BANK_PATH.is_dir(), reason="no template bank installed")
+def test_enlarging_the_picture_is_what_makes_a_photo_readable(monkeypatch):
+    """The control for the test above, and the reason ``enlarge`` exists.
+
+    Nothing else in the pipeline changes with the scale -- the crops are cut
+    in fractions of the card width and the templates are matched at a fixed
+    size -- so the enlargement is easy to mistake for a no-op that only costs
+    memory. It is not: read at the size it arrived, this same screenshot comes
+    out as a board that could not exist."""
+    bank = TemplateBank.load(BANK_PATH)
+    photo = cv2.imread(str(FIXTURES / "telegram" / "shot1.jpg"))
+    expected = parse_board((FIXTURES / "telegram" / "shot1.txt").read_text())
+
+    assert recognize(photo, bank).state == expected
+
+    # Nothing is small enough to enlarge any more, so the reader looks at the
+    # pixels it was given.
+    monkeypatch.setattr(RECOGNIZE, "MIN_RELIABLE_CARD_WIDTH", 0)
+    with pytest.raises(RecognitionError):
+        recognize(photo, bank)
 
 
 @pytest.mark.skipif(not BANK_PATH.is_dir(), reason="no template bank installed")
@@ -329,7 +388,7 @@ def test_a_mildly_degraded_screenshot_still_needs_no_questions(name, image_path,
     rather than on a representative one."""
     bank = TemplateBank.load(BANK_PATH)
     original = cv2.imread(str(image_path))
-    degraded = _as_telegram_photo(original, width=1600)
+    degraded = _as_sent(image_path, original, width=1600)
 
     result = recognize(degraded, bank)
     assert result.state == parse_board(expected_path.read_text(encoding="utf-8")), name
@@ -344,7 +403,7 @@ def test_the_deck_does_the_work_that_would_otherwise_be_questions():
     bank = TemplateBank.load(BANK_PATH)
     flagged = settled = 0
     for _name, image_path, _expected in FIXTURE_CASES:
-        degraded = _as_telegram_photo(cv2.imread(str(image_path)), width=1600)
+        degraded = _as_sent(image_path, cv2.imread(str(image_path)), width=1600)
         result = recognize(degraded, bank)
         flagged += sum(1 for r in result.reads if not r.confident and r.resolvable)
         settled += result.deduced
@@ -354,14 +413,38 @@ def test_the_deck_does_the_work_that_would_otherwise_be_questions():
 
 
 @pytest.mark.skipif(not BANK_PATH.is_dir(), reason="no template bank installed")
-def test_a_picture_too_small_to_verify_is_refused_rather_than_guessed_at():
-    """Below the reliable width the deck is what earns a picture its trust. On
-    this one it cannot: too many cards are unreadable for the elimination to
-    close, so the answer is to resend it as a file rather than to offer the
-    likeliest of hundreds of boards."""
+def test_a_reading_that_does_not_add_up_comes_back_as_a_draft_to_correct():
+    """A picture squeezed past what the reader can recover from is the one
+    case left where there is no board to show. There is still a reading, and
+    most of its forty cards are right, so it comes back in the input notation
+    for the user to fix the handful that are not -- which beats both retyping
+    the position and being told to go and find a better screenshot."""
     bank = TemplateBank.load(BANK_PATH)
     original = cv2.imread(str(FIXTURES / "iphone" / "shot1.png"))
+    # Scaled as Telegram scales it and then compressed harder than Telegram
+    # compresses it -- past what enlarging can recover.
+    mangled = _as_telegram_photo(original, width=1280, quality=20)
 
     with pytest.raises(RecognitionError) as excinfo:
-        recognize(_as_telegram_photo(original, width=1280), bank)
-    assert excinfo.value.likely_rescaled
+        recognize(mangled, bank)
+
+    error = excinfo.value
+    assert error.narrow
+    draft = error.draft
+    assert draft is not None
+
+    # Eight column lines of card codes: the user edits cards, not syntax. It
+    # does not add up as a board -- that is why it is a draft and not a read.
+    columns = [line for line in draft.splitlines() if line[:1].isdigit()]
+    assert len(columns) == NUM_COLUMNS
+    with pytest.raises(InvalidBoard):
+        parse_board(draft)
+
+    # And it is worth handing over: most of the deck is already right, so what
+    # is left is correcting a few cards rather than typing out forty.
+    expected = parse_board((FIXTURES / "iphone" / "shot1.txt").read_text())
+    wanted = Counter(card for column in expected.columns for card in column)
+    drafted = Counter(
+        parse_card(token) for line in columns for token in line.split()[1:]
+    )
+    assert sum((wanted & drafted).values()) >= 0.9 * sum(wanted.values())

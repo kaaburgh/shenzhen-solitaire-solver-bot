@@ -248,20 +248,62 @@ async def test_fix_hands_back_an_editable_position(context):
     assert "free:" in body and "foundations:" in body
 
 
+def _misread(text: str, slot: str, card: int):
+    """A :class:`RecognitionError` carrying a reading of ``text`` with the card
+    at ``slot`` misread as ``card`` -- which is what makes it not add up."""
+    from shenzhen.textio import parse_board
+    from shenzhen.vision.classify import Guess
+    from shenzhen.vision.layout import Box
+    from shenzhen.vision.recognize import ReadCard, RecognitionError
+    from shenzhen.vision.resolve import Skeleton
+
+    board = parse_board(text)
+    reads: list[ReadCard] = []
+    columns = []
+    for number, column in enumerate(board.columns, start=1):
+        group = []
+        for depth, seen in enumerate(column, start=1):
+            where = f"{number}.{depth}"
+            seen = card if where == slot else seen
+            reads.append(
+                ReadCard(
+                    card=seen,
+                    guess=Guess(card=seen, confidence=0.9, margin=0.2, colour=None),
+                    where=where,
+                    box=Box(0, 0, 1, 1),
+                )
+            )
+            group.append(len(reads) - 1)
+        columns.append(tuple(group))
+
+    skeleton = Skeleton(
+        columns=tuple(columns),
+        free=(None, None, None),
+        locked=(),
+        flower_slot=board.flower,
+        foundations=(None, None, None),
+    )
+    return RecognitionError(
+        "missing G3x1; duplicated G8x1", reads=reads, card_w=97, skeleton=skeleton
+    )
+
+
 @pytest.mark.asyncio
-async def test_a_rescaled_screenshot_is_explained_not_reported_as_deck_arithmetic(
+async def test_a_reading_that_does_not_add_up_comes_back_for_the_user_to_correct(
     context, monkeypatch
 ):
     """What a user actually hit: a screenshot sent as a Telegram photo came
     back as "missing G3x1, B3x1, B4x1; duplicated G8x1, B2x2, B7x1". That is
-    true and completely unactionable. The reply has to name the cause and the
-    fix instead."""
-    from shenzhen.vision.recognize import RecognitionError
+    true and completely unactionable.
+
+    Nearly every card in a reading like that is right, so the reply hands the
+    whole thing back in the text notation: the user fixes the two that are
+    wrong and sends it back, rather than being told to go and take a better
+    screenshot."""
+    error = _misread(SOLVABLE, "1.1", parse_card("G8"))
 
     def blow_up(_data, _bank):
-        raise RecognitionError(
-            "missing G3x1, B3x1, B4x1; duplicated G8x1, B2x2, B7x1", card_w=97
-        )
+        raise error
 
     context.application.bot_data["config"].bank = object()  # any non-None bank
     monkeypatch.setattr(handlers, "_recognize_bytes", blow_up)
@@ -272,9 +314,9 @@ async def test_a_rescaled_screenshot_is_explained_not_reported_as_deck_arithmeti
     await handlers.handle_image(FakeUpdate(message=message), context)
 
     body = texts(log)
+    assert error.draft in body, body     # the reading, ready to be edited
     assert "97" in body, body            # says how small it came in
-    assert "файлом" in body, body        # says what to do about it
-    assert "missing" not in body, body   # and not the deck arithmetic
+    assert "файлом" in body, body        # and what would avoid the problem
 
 
 # --- screenshots sent as files ---------------------------------------------

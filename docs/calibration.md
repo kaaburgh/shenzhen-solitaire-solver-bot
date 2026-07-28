@@ -143,7 +143,12 @@ about.
 
 Drop the screenshot and its board text into `tests/fixtures/<device>/` as
 `shotN.png` and `shotN.txt`. The suite picks up every pair it finds there and
-checks the reader still gets it exactly right.
+checks the reader still gets it exactly right — both as it is and squeezed the
+way Telegram squeezes a photo.
+
+Save it as `shotN.jpg` instead if it *came back out* of Telegram already, as
+`tests/fixtures/telegram/` did: the suite reads a `.jpg` fixture exactly as it
+landed and never compresses it a second time.
 
 ### 7. Ship it
 
