@@ -295,7 +295,9 @@ def recognize(
         for depth, box in enumerate(group):
             entry = read(box, f"{index + 1}.{depth + 1}")
             if entry is None:
-                warnings.append(f"column {index + 1}, card {depth + 1}: could not read the glyph")
+                # A glyph-less layout proposal is not a card read.  Real missing
+                # cards are rejected by the deck check; keeping the provisional
+                # slot as a warning only reports false splits as extra cards.
                 continue
             found.append(entry)
         columns.append(tuple(found))
