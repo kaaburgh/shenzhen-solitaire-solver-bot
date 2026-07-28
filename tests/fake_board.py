@@ -44,7 +44,12 @@ MARGIN_X, TOP_Y, TABLEAU_Y = 95, 60, 520
 FELT = (58, 84, 46)  # BGR, a saturated dark green
 FACE_TOP = (238, 244, 246)  # cards are lighter at the top ...
 FACE_BOTTOM = (206, 214, 219)  # ... and darker at the bottom
-BORDER = (60, 60, 60)
+# Light, because the game outlines a card in a hairline rather than in black.
+# It is the seam between two stacked cards, and how far it steps the brightness
+# up -- some tens of levels, not the two hundred a black outline would give --
+# is what the column splitter has to tell from the strokes of a glyph.  Drawn
+# too strongly, a splitter that could not tell them apart would still pass.
+BORDER = (190, 190, 190)
 BUTTON = (120, 190, 226)  # the tan of the dragon buttons
 BACK_LIGHT = (232, 240, 235)
 # Muted enough to still read as a card rather than as felt, which is how the
@@ -88,8 +93,8 @@ def slot_x(slot: int) -> int:
 def draw_mark(canvas: np.ndarray, card: int, x: int, y: int) -> None:
     """Print a card's identity in the corner strip.
 
-    Kept as narrow as the game's own glyph: a mark spanning much of the
-    column would move the row-mean brightness as much as a card boundary
+    Kept as narrow as the game's own glyph: a mark covering more than half the
+    column's width would step its median brightness up the way a card boundary
     does, and the column splitter would cut cards in half at every glyph.
     """
     ink = _ink(card)
