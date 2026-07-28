@@ -21,8 +21,10 @@ class Pending:
     """A screenshot part-way through being pinned down.
 
     Everything needed to rebuild the board from a different set of answers,
-    and nothing else -- notably not the screenshot, which is why answering a
-    question costs no memory beyond the card scores already worked out.
+    plus a picture of each slot that could still be asked about.  Not the
+    screenshot itself: the questions only ever land on reads the deck could
+    not settle, of which there are at most a dozen or so, and a dozen small
+    crops is a bounded cost where holding the original is not.
     """
 
     #: identifies this interview in callback data.  A keyboard from an earlier
@@ -39,11 +41,15 @@ class Pending:
     #: exchange so that the read indices in `pinned` keep meaning the same
     #: thing between one question and the next.
     level: int = 0
+    #: the read the bot is asking about right now.  A question that carries a
+    #: picture has to be its own message rather than an edit of the last one,
+    #: so earlier keyboards stay live in the chat and have to be turned away.
+    asked: int | None = None
     warnings: list[str] = field(default_factory=list)
-    #: how many shaky reads the deck settled by itself, for the closing note
-    deduced: int = 0
-    #: card width, when the picture came in under what reads reliably
-    narrow: int | None = None
+    #: read index -> an encoded picture of that slot, cut from the screenshot
+    #: while it was still in hand, so a question can show what it is asking
+    #: about rather than describing it
+    crops: dict[int, bytes] = field(default_factory=dict)
 
 
 @dataclass
@@ -56,6 +62,9 @@ class Session:
     busy: bool = False
     #: set while the bot is asking about cards it could not read
     pending: Pending | None = None
+    #: the board went to the solver without the user ever being asked about
+    #: it, so whatever comes back has to offer a way to look at the reading
+    unconfirmed: bool = False
     #: how many interviews this chat has started, so each gets its own token
     interviews: int = 0
 
