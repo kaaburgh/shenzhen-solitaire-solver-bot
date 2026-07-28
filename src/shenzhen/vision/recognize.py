@@ -11,7 +11,7 @@ import cv2
 import numpy as np
 
 from ..cards import SUIT_LETTERS, card_code, is_suit_card, rank_of, suit_of
-from ..game import NUM_COLUMNS, NUM_FREE_CELLS, State
+from ..game import NUM_COLUMNS, NUM_FREE_CELLS, DeckMismatch, State
 from .classify import Guess, TemplateBank, classify
 from .layout import BoardLayout, Box, LayoutConfig, LayoutError, corner_patch, detect_layout
 from .resolve import Resolution, Skeleton, Unresolvable, resolve
@@ -51,11 +51,16 @@ class RecognitionError(RuntimeError):
         reads: list[ReadCard] | None = None,
         card_w: int | None = None,
         skeleton: Skeleton | None = None,
+        deck: DeckMismatch | None = None,
     ) -> None:
         super().__init__(message)
         self.reads = reads or []
         self.card_w = card_w
         self.skeleton = skeleton
+        #: the deck complaint behind this, when that is what went wrong, so
+        #: the bot can say it in the user's language and in the card marks
+        #: instead of re-wording the text it was raised with.
+        self.deck = deck
 
     @property
     def narrow(self) -> bool:
@@ -336,7 +341,11 @@ def recognize(
         resolution = resolve(skeleton, reads)
     except Unresolvable as exc:
         raise RecognitionError(
-            str(exc), reads=reads, card_w=source_card_w, skeleton=skeleton
+            str(exc),
+            reads=reads,
+            card_w=source_card_w,
+            skeleton=skeleton,
+            deck=exc.deck,
         ) from exc
 
     if resolution.truncated:

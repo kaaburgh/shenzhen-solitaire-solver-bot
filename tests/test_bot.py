@@ -207,11 +207,15 @@ async def test_a_dead_board_is_reported_as_unwinnable(context):
 
 @pytest.mark.asyncio
 async def test_an_impossible_board_is_rejected_with_the_reason(context):
+    """The card is named the way it is drawn -- 🟢1, not G1 -- because the
+    complaint's whole job is to send someone back to the screen to find it.
+    The text it came from is in letters, so the two are lined up for them."""
     log: list = []
     await send_text(context, SOLVABLE.replace("free: . . .", "free: G1 . ."), log)
     body = texts(log)
     assert "Так не бывает" in body
-    assert "G1" in body
+    assert card_mark(parse_card("G1")) in body, body
+    assert "🟢 = G" in body, body
 
 
 @pytest.mark.asyncio
@@ -251,6 +255,8 @@ async def test_fix_hands_back_an_editable_position(context):
 def _misread(text: str, slot: str, card: int):
     """A :class:`RecognitionError` carrying a reading of ``text`` with the card
     at ``slot`` misread as ``card`` -- which is what makes it not add up."""
+    from shenzhen.cards import make_card
+    from shenzhen.game import InvalidBoard
     from shenzhen.textio import parse_board
     from shenzhen.vision.classify import Guess
     from shenzhen.vision.layout import Box
@@ -276,15 +282,47 @@ def _misread(text: str, slot: str, card: int):
             group.append(len(reads) - 1)
         columns.append(tuple(group))
 
+    # The collected cards are read too, so the only card this reading is short
+    # of is the one that was misread -- otherwise the complaint would blame the
+    # foundations for every board the fixture builds.
+    foundations: list[int | None] = [None, None, None]
+    for suit, top in enumerate(board.foundations):
+        if not top:
+            continue
+        seen = make_card(suit, top)
+        reads.append(
+            ReadCard(
+                card=seen,
+                guess=Guess(card=seen, confidence=0.9, margin=0.2, colour=None),
+                where=f"foundation{suit + 1}",
+                box=Box(0, 0, 1, 1),
+            )
+        )
+        foundations[suit] = len(reads) - 1
+
     skeleton = Skeleton(
         columns=tuple(columns),
         free=(None, None, None),
         locked=(),
         flower_slot=board.flower,
-        foundations=(None, None, None),
+        foundations=tuple(foundations),
     )
+    # Take the complaint from the reading itself rather than writing one out,
+    # so the fixture carries the same structured mismatch the recogniser would
+    # have raised -- including the cards it names.
+    try:
+        skeleton.build([read.card for read in reads])
+    except InvalidBoard as exc:
+        complaint = exc
+    else:  # pragma: no cover -- the misread is what makes it illegal
+        raise AssertionError("that misreading is a legal board")
+
     return RecognitionError(
-        "missing G3x1; duplicated G8x1", reads=reads, card_w=97, skeleton=skeleton
+        str(complaint),
+        reads=reads,
+        card_w=97,
+        skeleton=skeleton,
+        deck=complaint.deck,
     )
 
 
@@ -317,6 +355,14 @@ async def test_a_reading_that_does_not_add_up_comes_back_for_the_user_to_correct
     assert error.draft in body, body     # the reading, ready to be edited
     assert "97" in body, body            # says how small it came in
     assert "файлом" in body, body        # and what would avoid the problem
+
+    # The cards that do not add up are named as they are drawn, and the draft
+    # below them is in the typed notation, so the message says which is which.
+    assert "не хватает" in body, body
+    assert card_mark(parse_card("G1")) in body, body   # the card that was eaten
+    assert card_mark(parse_card("G8")) in body, body   # and what ate it
+    assert "G1x1" not in body, body
+    assert "🟢 = G" in body, body
 
 
 # --- screenshots sent as files ---------------------------------------------

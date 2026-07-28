@@ -29,6 +29,7 @@ from .cards import (
     FLOWER,
     FULL_DECK,
     SUITS,
+    card_code,
     is_locked,
     is_suit_card,
     locked_cell,
@@ -135,8 +136,45 @@ def deal(seed: int | None = None) -> State:
     )[0]
 
 
+class DeckMismatch(NamedTuple):
+    """Which cards a position holds too few and too many of.
+
+    Kept as cards and counts rather than as a finished sentence because the
+    same complaint is said two ways: ``str`` of it is the letter notation, for
+    logs and for anyone reading the engine on its own, while the bot renders it
+    in the coloured marks -- ``⚫4`` -- since the whole point of the message is
+    to send someone back to the screen to find that card.
+    """
+
+    #: ``(card, how many are short)``, in card order
+    missing: tuple[tuple[int, int], ...] = ()
+    #: ``(card, how many too many)``, in card order
+    extra: tuple[tuple[int, int], ...] = ()
+
+    def __str__(self) -> str:
+        parts = []
+        if self.missing:
+            parts.append(
+                "missing " + ", ".join(f"{card_code(c)}x{n}" for c, n in self.missing)
+            )
+        if self.extra:
+            parts.append(
+                "duplicated " + ", ".join(f"{card_code(c)}x{n}" for c, n in self.extra)
+            )
+        return "; ".join(parts)
+
+
 class InvalidBoard(ValueError):
-    """The described position could not exist in a real game."""
+    """The described position could not exist in a real game.
+
+    ``deck`` carries the structured form of the complaint when the problem is
+    that the cards do not add up to the deck; it is ``None`` for the other
+    ways a position can be impossible.
+    """
+
+    def __init__(self, message: str, *, deck: DeckMismatch | None = None) -> None:
+        super().__init__(message)
+        self.deck = deck
 
 
 def validate(state: State) -> None:
@@ -170,24 +208,19 @@ def validate(state: State) -> None:
         expected[card] = expected.get(card, 0) + 1
 
     if counts != expected:
-        from .cards import card_code
-
-        missing = [
-            f"{card_code(c)}x{expected[c] - counts.get(c, 0)}"
-            for c in sorted(expected)
-            if counts.get(c, 0) < expected[c]
-        ]
-        extra = [
-            f"{card_code(c)}x{counts[c] - expected.get(c, 0)}"
-            for c in sorted(counts)
-            if counts[c] > expected.get(c, 0)
-        ]
-        parts = []
-        if missing:
-            parts.append("missing " + ", ".join(missing))
-        if extra:
-            parts.append("duplicated " + ", ".join(extra))
-        raise InvalidBoard("; ".join(parts))
+        mismatch = DeckMismatch(
+            missing=tuple(
+                (c, expected[c] - counts.get(c, 0))
+                for c in sorted(expected)
+                if counts.get(c, 0) < expected[c]
+            ),
+            extra=tuple(
+                (c, counts[c] - expected.get(c, 0))
+                for c in sorted(counts)
+                if counts[c] > expected.get(c, 0)
+            ),
+        )
+        raise InvalidBoard(str(mismatch), deck=mismatch)
 
 
 # --- automatic behaviour ---------------------------------------------------

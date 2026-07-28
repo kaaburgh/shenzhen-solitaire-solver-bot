@@ -38,6 +38,7 @@ from ..cards import (
     suit_of,
 )
 from ..game import InvalidBoard, State, auto_resolve, validate
+from ..notation import SUIT_MARKS, card_mark
 
 #: how many complete boards to keep.  Only used to decide what is settled and
 #: what to ask, so a cap costs nothing once it is comfortably past the point
@@ -127,10 +128,14 @@ class Skeleton:
                 continue
             card = cards[index]
             if not is_suit_card(card):
-                raise InvalidBoard(f"foundation {slot + 1}: {card} cannot sit there")
+                raise InvalidBoard(
+                    f"foundation {slot + 1}: {card_mark(card)} cannot sit there"
+                )
             suit = suit_of(card)
             if suit in seen_suits:
-                raise InvalidBoard(f"two foundations of the same suit ({suit})")
+                raise InvalidBoard(
+                    f"two foundations of the same suit ({SUIT_MARKS[suit]})"
+                )
             seen_suits.add(suit)
             foundations[suit] = rank_of(card)
 
@@ -350,7 +355,7 @@ def resolve(
             continue
         return _at_level(skeleton, reads, pinned, min(step + 1, len(LEVELS) - 1))
 
-    raise Unresolvable(str(_complaint(skeleton, reads, pinned)))
+    raise _unresolvable(skeleton, reads, pinned)
 
 
 def _at_level(
@@ -361,11 +366,23 @@ def _at_level(
         possibilities, truncated = _search(skeleton, reads, unknowns, pinned)
         if possibilities:
             return _summarise(unknowns, possibilities, level, truncated)
-    raise Unresolvable(str(_complaint(skeleton, reads, pinned)))
+    raise _unresolvable(skeleton, reads, pinned)
+
+
+def _unresolvable(
+    skeleton: Skeleton, reads: Sequence, pinned: dict[int, int]
+) -> Unresolvable:
+    """Why the reader's own best guess is not a legal position.
+
+    The deck complaint is carried across rather than flattened into its text:
+    it is the one thing here the bot says in the user's own language and in
+    the coloured marks, and both need the cards, not a sentence about them.
+    """
+    complaint = _complaint(skeleton, reads, pinned)
+    return Unresolvable(str(complaint), deck=complaint.deck)
 
 
 def _complaint(skeleton: Skeleton, reads: Sequence, pinned: dict[int, int]) -> InvalidBoard:
-    """Why the reader's own best guess is not a legal position."""
     cards = [pinned.get(i, read.card) for i, read in enumerate(reads)]
     try:
         skeleton.build(cards)
