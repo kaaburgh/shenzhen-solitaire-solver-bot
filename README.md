@@ -122,8 +122,10 @@ That triggers `.github/workflows/release.yml`: it rebuilds the image (same
 Dockerfile the CI `docker` job already validated on the PR), runs the same
 two smoke checks again — solves a deal, loads the card template bank — and
 only then pushes `ghcr.io/kaaburgh/shenzhen-solitaire-solver-bot` tagged with
-the release tag and with `latest`. Watch it under the repo's **Actions** tab;
-takes about a minute.
+the release tag and with `latest`. What gets pushed is the image the checks
+ran against, tagged where it stands rather than built a second time, so there
+is no gap between what was tested and what was published. Watch it under the
+repo's **Actions** tab; takes about a minute.
 
 A tag alone (`git tag v1.1.0 && git push origin v1.1.0`) does not trigger
 this — it has to go through **Publish release**, since that is the point
