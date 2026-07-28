@@ -108,11 +108,27 @@ class Recognition:
     #: go at it.  The layout describes the enlarged copy, so it is no longer
     #: the place to ask how small the thing the user actually sent was.
     source_card_w: int | None = None
+    #: what :func:`enlarge` multiplied the picture by before it was read, so a
+    #: box measured on the enlarged copy can be put back on the original --
+    #: which is the picture worth showing anyone.
+    scale: int = 1
     #: how the board was arrived at, and what is still open about it.  Carried
     #: so the bot can ask about the open cards and rebuild the board from the
     #: answers without holding on to the screenshot.
     skeleton: Skeleton | None = None
     resolution: Resolution | None = None
+
+    def source_box(self, index: int) -> Box:
+        """Where read ``index`` sits in the picture the user actually sent."""
+        box = self.reads[index].box
+        if self.scale <= 1:
+            return box
+        return Box(
+            box.x // self.scale,
+            box.y // self.scale,
+            max(1, box.w // self.scale),
+            max(1, box.h // self.scale),
+        )
 
     @property
     def uncertain_indices(self) -> list[int]:
@@ -349,6 +365,7 @@ def recognize(
         warnings=warnings,
         layout=layout,
         source_card_w=source_card_w,
+        scale=scale,
         skeleton=skeleton,
         resolution=resolution,
     )

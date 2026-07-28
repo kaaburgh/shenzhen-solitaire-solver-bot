@@ -52,6 +52,10 @@ class FakeMessage:
         self.log.append((text, kwargs))
         return FakeMessage(self.chat, text, log=self.log)
 
+    async def reply_photo(self, photo, caption=None, **kwargs):
+        self.log.append((caption or "", {"photo": photo, **kwargs}))
+        return FakeMessage(self.chat, caption, log=self.log)
+
     async def edit_text(self, text, **kwargs):
         self.log.append((text, kwargs))
         return self
@@ -97,12 +101,22 @@ class FakeQuery:
         self.data = data
         self.message = message
         self.answered = False
+        #: which edit method the handler reached for, so the tests can catch
+        #: the one Telegram would have rejected
+        self.edited_as: str | None = None
 
     async def answer(self, *args, **kwargs):
         self.answered = True
 
     async def edit_message_text(self, text, **kwargs):
+        assert not self.message.photo, "Telegram rejects editMessageText on a photo"
+        self.edited_as = "text"
         self.message.log.append((text, kwargs))
+
+    async def edit_message_caption(self, caption=None, **kwargs):
+        assert self.message.photo, "a caption belongs to a photo"
+        self.edited_as = "caption"
+        self.message.log.append((caption or "", kwargs))
 
 
 class FakeUpdate:
@@ -151,9 +165,15 @@ async def send_text(context, body: str, log: list):
     await handlers.handle_text(FakeUpdate(message=message), context)
 
 
-async def press(context, data: str, log: list):
-    query = FakeQuery(data, FakeMessage(FakeChat(), log=log))
+async def press(context, data: str, log: list, on_photo: bool = False):
+    """Press a button. ``on_photo`` when the keyboard is under a crop, which is
+    what a question about a card the bot could show a picture of looks like."""
+    message = FakeMessage(FakeChat(), log=log)
+    if on_photo:
+        message.photo = [object()]
+    query = FakeQuery(data, message)
     await handlers.on_callback(FakeUpdate(query=query), context)
+    return query
 
 
 async def send_file(context, document, log: list):
@@ -349,10 +369,8 @@ async def test_a_screenshot_sent_as_a_file_is_read_like_any_other(reading, mime_
     log: list = []
     await send_file(reading, FakeDocument(mime_type=mime_type), log)
 
-    assert "1:" in texts(log)  # the rendered board, not silence
-    keyboard = log[-1][1]["reply_markup"]
-    callbacks = [button.callback_data for row in keyboard.inline_keyboard for button in row]
-    assert callbacks == ["solve", "fix"]
+    # Read, accepted and answered, rather than ignored for its mime type.
+    assert "Решение есть" in texts(log), texts(log)
 
 
 @pytest.mark.asyncio
@@ -420,11 +438,22 @@ def _screenshot(unsure):
     )
 
 
-async def send_photo(context, log, recognition, monkeypatch):
+async def send_photo(context, log, recognition, monkeypatch, crops=None):
+    """Hand the bot a screenshot that recognises as ``recognition``.
+
+    ``crops`` stands in for the pictures cut out of the real bytes -- the
+    stand-in reads carry no boxes to cut from, and what the handlers do with a
+    crop is separate from how it was made.
+    """
     context.application.bot_data["config"].bank = object()
     message = FakeMessage(FakeChat(), log=log)
     message.photo = [FakePhoto()]
     monkeypatch.setattr(handlers, "_recognize_bytes", lambda _data, _bank: recognition)
+    monkeypatch.setattr(
+        handlers,
+        "_crops",
+        lambda _data, _result, indices: {i: crops[i] for i in indices if i in (crops or {})},
+    )
     await handlers.handle_image(FakeUpdate(message=message), context)
 
 
@@ -434,9 +463,14 @@ def buttons(log):
 
 
 @pytest.mark.asyncio
-async def test_cards_the_deck_settles_are_never_asked_about(context, monkeypatch):
-    """Three shaky reads, none of which collide -- so the deck names all three
-    and the user is asked nothing at all."""
+async def test_a_reading_nothing_disagreed_with_goes_straight_to_the_answer(
+    context, monkeypatch
+):
+    """Three shaky reads, none of which collide, and the deck came to the same
+    answer the matcher did on all three. Two independent verdicts agreeing on
+    forty cards that add up to exactly one deck is not something a human can
+    improve on, so there is nothing to ask and no reason to charge a tap for
+    the privilege."""
     _, recognition = _screenshot({
         "1.1": ["G1", "G5"],
         "3.1": ["R2", "R7"],
@@ -446,10 +480,45 @@ async def test_cards_the_deck_settles_are_never_asked_about(context, monkeypatch
     await send_photo(context, log, recognition, monkeypatch)
 
     body = texts(log)
-    assert "что там?" not in body, body
-    assert "Сходится?" in body                # went straight to confirming
+    assert "что там?" not in body, body      # no question
+    assert "сверь" not in body, body         # and no confirmation either
+    assert "Решение есть" in body, body
+
+    # The way back is on the answer, since nobody was asked on the way in.
+    assert buttons(log[:-1]) == ["board", "fix"]
+
+
+@pytest.mark.asyncio
+async def test_the_card_the_deck_overruled_is_the_only_one_put_up(context, monkeypatch):
+    """G3 misread as G8 and put back by the deck: one slot where the two ways
+    of reading the board disagreed, and the only slot worth a human's eyes."""
+    _, recognition = _screenshot({"1.3": ["G8", "G3"]})
+    log: list = []
+    await send_photo(context, log, recognition, monkeypatch)
+
+    body = texts(log)
+    assert "сверь" in body, body
+    assert body.count("—") == 1, body        # one slot, not four
+    assert "колонка 1" in body, body         # said where to look, in words
+    assert "\n1: " not in body, body         # and did not print the board
     assert buttons(log) == ["solve", "fix", "board"]
-    assert "подставил" in body, body         # and said it had filled them in
+
+
+@pytest.mark.asyncio
+async def test_the_card_being_asked_about_comes_with_a_picture_of_itself(
+    context, monkeypatch
+):
+    """Otherwise the only way to answer is to open the screenshot that was
+    just sent and squint at it, which is the work the question was meant to
+    save."""
+    view, recognition = _screenshot({"1.3": ["G8", "G3"]})
+    log: list = []
+    await send_photo(
+        context, log, recognition, monkeypatch, crops={view.index_of("1.3"): b"crop"}
+    )
+
+    assert log[-1][1].get("photo") == b"crop", log[-1]
+    assert "сверь" in log[-1][0]
 
 
 @pytest.mark.asyncio
@@ -468,7 +537,9 @@ async def test_one_open_card_is_put_as_a_question_with_the_answers_as_buttons(co
 
 
 @pytest.mark.asyncio
-async def test_answering_the_one_question_settles_the_rest_and_shows_the_board(context, monkeypatch):
+async def test_answering_the_one_question_settles_the_rest_and_solves(context, monkeypatch):
+    """The answer pins its twin by elimination, and once it has there is
+    nothing left in doubt -- so the next thing the user sees is the answer."""
     view, recognition = _screenshot({"1.3": ["G3", "G8"], "2.3": ["G8", "G3"]})
     log: list = []
     await send_photo(context, log, recognition, monkeypatch)
@@ -477,8 +548,8 @@ async def test_answering_the_one_question_settles_the_rest_and_shows_the_board(c
     await press(context, answer, log)
 
     body = texts(log)
-    assert buttons(log) == ["solve", "fix", "board"]  # done asking
-    assert "Сходится?" in body
+    assert "что там?" not in body.split("Считаю")[-1]   # done asking
+    assert "Решение есть" in body, body
     session = context.application.bot_data["sessions"].get(1)
     assert session.pending is None
     assert session.board == recognition.state
@@ -502,8 +573,8 @@ async def test_cards_too_many_to_ask_about_are_named_as_the_board_reads_them(
     await send_photo(context, log, recognition, monkeypatch)
 
     body = texts(log)
-    assert "что там?" not in body, body               # no interview
-    assert buttons(log) == ["solve", "fix", "board"]  # straight to confirm-or-fix
+    assert "что там?" not in body, body       # no interview
+    assert buttons(log) == ["solve", "fix"]   # the board itself, to confirm or fix
 
     note = next(line for line in body.splitlines() if "3-я карта сверху" in line)
     named = note.split("—")[-1].strip()
@@ -532,6 +603,88 @@ async def test_none_of_these_widens_the_choice_instead_of_dead_ending(context, m
 
 
 @pytest.mark.asyncio
+async def test_widening_a_question_that_came_as_a_picture_edits_its_caption(
+    context, monkeypatch
+):
+    """Telegram changes a caption and a body of text through different methods
+    and rejects the wrong one outright. Reaching for `editMessageText` here
+    would strand exactly the user whose card is missing from the shortlist --
+    the only user who presses this button."""
+    view, recognition = _screenshot({
+        "5.1": ["B3", "B4", "B5", "B6", "B8", "B9", "G1", "G2", "B7"],
+        "5.2": ["B4", "B3"],
+        "5.5": ["B7", "B3"],
+    })
+    log: list = []
+    await send_photo(
+        context, log, recognition, monkeypatch, crops={view.index_of("5.1"): b"crop"}
+    )
+    assert log[-1][1].get("photo") == b"crop"    # the question came as a picture
+
+    wide = next(b for b in buttons(log) if b.startswith("wide:"))
+    query = await press(context, wide, log, on_photo=True)
+
+    # In place, so the crop stays above the wider list rather than scrolling
+    # away from the question it belongs to.
+    assert query.edited_as == "caption"
+    assert any(b.startswith("pick:") for b in buttons(log))
+
+
+@pytest.mark.asyncio
+async def test_a_question_without_a_crop_is_not_edited_over_one_that_had_one(
+    context, monkeypatch
+):
+    """Editing text into a photo message is rejected by Telegram outright, and
+    editing its caption would be worse than the error: the picture of the slot
+    just dealt with would stay put above a question about a different one."""
+    view, recognition = _screenshot({
+        "5.1": ["B3", "B4"],
+        "5.2": ["B4", "B3"],
+        "6.3": ["DG", "DR"],
+        "7.2": ["DR", "DG"],
+    })
+    log: list = []
+    crops = {u.index: b"crop" for u in recognition.resolution.unknowns}
+    await send_photo(context, log, recognition, monkeypatch, crops=crops)
+
+    session = context.application.bot_data["sessions"].get(1)
+    assert log[-1][1].get("photo") == b"crop"
+    session.pending.crops = {}                   # nothing to show for the next one
+
+    answer = next(b for b in buttons(log) if b.startswith("pick:"))
+    query = await press(context, answer, log, on_photo=True)
+
+    assert query.edited_as is None, "edited the message the crop was attached to"
+    assert "что там?" in log[-1][0], log[-1]      # asked again, as a new message
+    assert log[-1][1].get("photo") is None
+
+
+@pytest.mark.asyncio
+async def test_a_stale_other_button_is_turned_away_like_a_stale_answer(
+    context, monkeypatch
+):
+    """"Other…" from a superseded question widens a slot the interview has
+    already moved past, and hands back a keyboard of answers that would then
+    be refused one by one."""
+    view, recognition = _screenshot({
+        "5.1": ["B3", "B4"],
+        "5.2": ["B4", "B3"],
+        "6.3": ["DG", "DR"],
+        "7.2": ["DR", "DG"],
+    })
+    log: list = []
+    await send_photo(context, log, recognition, monkeypatch)
+
+    session = context.application.bot_data["sessions"].get(1)
+    stale = next(b for b in buttons(log) if b.startswith("wide:"))
+    session.pending.asked = None  # as if the interview had moved on
+
+    await press(context, stale, log)
+
+    assert "не жду ответа" in texts(log)
+
+
+@pytest.mark.asyncio
 async def test_an_answer_that_breaks_the_deck_is_refused_rather_than_accepted(context, monkeypatch):
     view, recognition = _screenshot({"1.3": ["G3", "G8"], "2.3": ["G8", "G3"]})
     log: list = []
@@ -542,6 +695,7 @@ async def test_an_answer_that_breaks_the_deck_is_refused_rather_than_accepted(co
     first, second = view.index_of("1.3"), view.index_of("2.3")
     g3 = parse_card("G3")
     session.pending.pinned = {first: g3}
+    session.pending.asked = second
     await press(context, f"pick:{session.pending.token}:{second}:{g3}", log)
 
     assert "не сходится" in texts(log)
@@ -561,44 +715,33 @@ async def test_bailing_out_to_typing_keeps_the_best_reading_so_far(context, monk
 
 
 @pytest.mark.asyncio
-async def test_the_users_own_answer_is_not_reported_back_as_deduced(context, monkeypatch):
-    """After answering, the closing note should count only what the deck
-    worked out -- not the card the user just supplied."""
-    view, recognition = _screenshot({"1.3": ["G3", "G8"], "2.3": ["G8", "G3"]})
-    log: list = []
-    await send_photo(context, log, recognition, monkeypatch)
-
-    await press(context, next(b for b in buttons(log) if b.startswith("pick:")), log)
-
-    # Two shaky cards, one answered by hand and one falling out of it: the
-    # note should either be absent or say one, never two.
-    body = texts(log)
-    assert "подставил" not in body or " 1 " in body, body
-
-
-@pytest.mark.asyncio
-async def test_confirming_a_screenshot_asks_about_four_cards_not_forty(context, monkeypatch):
-    """The board is eight vertical stacks on screen and eight horizontal lines
-    in a message, so reading the whole thing back is forty codes to walk
-    against forty pictures in a layout that does not match. Four slots, named
-    where they sit, is the whole of what confirmation needs."""
-    _, recognition = _screenshot({
-        "1.1": ["G1", "G5"],
-        "3.1": ["R2", "R7"],
-        "5.1": ["B3", "B8"],
+async def test_a_stale_button_from_the_same_interview_is_turned_away(context, monkeypatch):
+    """A question that carries a picture has to be a message of its own, so the
+    keyboard of the question before it stays live in the chat. Answering that
+    one would pin a card the interview has already moved past."""
+    view, recognition = _screenshot({
+        "5.1": ["B3", "B4"],
+        "5.2": ["B4", "B3"],
+        "6.3": ["DG", "DR"],
+        "7.2": ["DR", "DG"],
     })
     log: list = []
     await send_photo(context, log, recognition, monkeypatch)
 
-    body = texts(log)
-    assert body.count("•") == 4, body
-    assert "колонка" in body                  # says where to look, in words
-    assert "\n1: " not in body, body          # and does not print the board
+    session = context.application.bot_data["sessions"].get(1)
+    stale = next(b for b in buttons(log) if b.startswith("pick:"))
+    session.pending.asked = None  # as if the interview had moved on
+
+    before = dict(session.pending.pinned)
+    await press(context, stale, log)
+
+    assert "не жду ответа" in texts(log)
+    assert session.pending.pinned == before
 
 
 @pytest.mark.asyncio
-async def test_the_cards_put_up_are_coloured_rather_than_lettered(context, monkeypatch):
-    _, recognition = _screenshot({"1.1": ["G1", "G5"]})
+async def test_the_card_put_up_is_coloured_rather_than_lettered(context, monkeypatch):
+    _, recognition = _screenshot({"1.1": ["G5", "G1"]})  # G1 misread as G5
     log: list = []
     await send_photo(context, log, recognition, monkeypatch)
 
@@ -609,7 +752,7 @@ async def test_the_cards_put_up_are_coloured_rather_than_lettered(context, monke
 
 @pytest.mark.asyncio
 async def test_the_whole_board_is_one_button_away_for_anyone_who_wants_it(context, monkeypatch):
-    _, recognition = _screenshot({"1.1": ["G1", "G5"]})
+    _, recognition = _screenshot({"1.1": ["G5", "G1"]})
     log: list = []
     await send_photo(context, log, recognition, monkeypatch)
     await press(context, "board", log)
