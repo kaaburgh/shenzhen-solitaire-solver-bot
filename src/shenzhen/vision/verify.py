@@ -1,21 +1,33 @@
-"""Which handful of cards is worth a human's eyes.
+"""Whether a card is worth a human's eyes, and if so which one.
 
-Reading the whole position back is a poor way to have it checked.  The board
-is eight vertical stacks on screen and eight horizontal lines in a message, so
-confirming it means walking forty codes against forty pictures in a layout
-that does not match -- and the effort is spread evenly over cards that deserve
-none of it.  A card the matcher won by a mile is not where the mistake will
-be, and forty of those crowd out the two that are.
+The deck does most of this job already.  :func:`~shenzhen.game.validate`
+demands exactly the forty cards of a real deck, no more and no fewer, so any
+reading the resolver accepts is deck-complete -- and that one fact rules out
+almost everything a spot check used to exist for.  A screenshot of something
+else, a card dropped because its glyph would not classify, a grid whose
+columns came out shuffled: each of those loses or duplicates cards, and none
+of them survives the count.  Asking a human to re-check a reading the deck has
+already proved is asking them to repeat work that was done properly.
 
-So only a few slots go up.  Three of them are the reads the matcher was least
-sure of, in the order it was unsure about them.  The fourth is the one it was
-*most* sure of, and that one is the point of the exercise: the shaky cards
-catch a misread glyph, while the confident one catches everything a list of
-doubts cannot see -- a screenshot of a different deal, a grid anchored one
-slot over, a board that moved on between the screenshot and now.  Those
-failures get every card wrong at once, so none of them looks individually
-suspicious, and the only way to notice is to check a card the bot claims to be
-certain about.
+What the deck cannot see is a reading where two mistakes cancel -- and the
+reader's own scores are what point at those.  Every card arrives with two
+independent verdicts on it: the template match, and the deck arithmetic that
+had to fit it alongside thirty-nine others.  Where both say the same thing
+there is nothing left to ask.  Where the deck *overruled* the matcher, one
+card is worth a look, and it is a specific card rather than a sample.
+
+So a clean read goes through without a word, and a read the deck had to
+correct puts up exactly one slot -- with a picture of it, since the point of
+asking is that the user looks at that card rather than at the whole
+screenshot.
+
+The one failure the deck genuinely cannot catch is geometric.  When the layout
+pass cannot find the dragon buttons it falls back to guessing which grid slot
+the leftmost column occupies, and a wrong guess slides every column sideways:
+all forty cards are present, the deck is content, and every column is
+mislabelled.  That is what the control card is for -- a card the matcher won
+outright, named by the column it sits in, so that saying the column out loud
+is what catches the shift.
 """
 
 from __future__ import annotations
@@ -23,14 +35,13 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-#: how many shaky reads to put up alongside the control card
-DOUBTS = 3
-
 
 @dataclass(frozen=True)
 class Check:
     """One slot to look at, and what the bot thinks is in it."""
 
+    #: position in the read list, so the caller can cut a picture of the slot
+    index: int
     where: str
     card: int
     #: how many cards the slot's column holds, so the bottom card of a stack
@@ -59,6 +70,10 @@ def _group(where: str) -> str:
     return where.partition(".")[0]
 
 
+def _in_tableau(where: str) -> bool:
+    return "." in where
+
+
 def _quality(read) -> tuple[float, float]:
     """How well this read won, from the matcher's point of view."""
     guess = getattr(read, "guess", None)
@@ -67,126 +82,82 @@ def _quality(read) -> tuple[float, float]:
     return (getattr(guess, "margin", 1.0), getattr(guess, "confidence", 1.0))
 
 
-def _tier(read) -> int:
-    """How much doubt is left on a read once the deck has had its say.
-
-    A read the matcher flagged and the deck then settled is only as sound as
-    the forty cards it was settled against.  Everything else stood on its own.
-    """
-    return 0 if not read.confident else 1
-
-
-def _open(index: int, resolution) -> bool:
-    """Is this a read the surviving boards still disagree about?
-
-    Those are not confirmations, they are questions, and the bot puts them as
-    questions -- one at a time as an interview, or listed with their
-    alternatives when there are too many for that to be worth anyone's time.
-    Either way the slot is already in front of the user with more to say about
-    it than a spot check could, so it must not also eat one of the four.
-    """
-    return resolution is not None and index in resolution.open
-
-
-def _resolved(index: int, read, resolution, pinned: dict[int, int]) -> int:
-    """The card the bot ended up with for this read.
-
-    Not the matcher's own winner where the deck overruled it: the board being
-    shown holds the corrected card, and asking someone to confirm the reading
-    that lost would be asking about a card the bot is not going to use.
-    """
-    if index in pinned:
-        return pinned[index]
-    if resolution is not None and index in resolution.settled:
-        return resolution.settled[index]
-    return read.card
-
-
-def spot_checks(
+def spot_check(
     reads: Sequence,
     resolution=None,
     pinned: dict[int, int] | None = None,
     *,
-    doubts: int = DOUBTS,
-) -> tuple[Check, ...]:
-    """The few slots to have checked, in the order they sit on the board.
+    warnings: Sequence[str] = (),
+) -> Check | None:
+    """The one slot worth confirming, or ``None`` when the reading proved itself.
 
     ``pinned`` are the reads the user has already answered a question about;
-    those are excluded, since asking someone to confirm what they just typed
-    tests nothing.  So is the flower slot, which cannot hold anything else,
-    and so is anything still open -- see :func:`_open`.
+    those are never put back up, since asking someone to confirm what they
+    just typed tests nothing.  Neither is a card that is still open -- the bot
+    is about to ask about that one properly, with its alternatives, and a
+    confirmation of a card it has not settled on would say less than the
+    question does.
 
-    Comes back empty when there is nothing to sample -- a position that was
-    typed out rather than read off a picture -- which is the caller's cue to
-    show the board itself instead.
+    ``None`` also comes back for a position that was typed out rather than
+    read off a picture, which is the caller's cue to show the board itself.
     """
+    if resolution is None or not reads:
+        return None
     pinned = dict(pinned or {})
-    candidates = [
-        index
-        for index, read in enumerate(reads)
-        if read.resolvable and index not in pinned and not _open(index, resolution)
-    ]
-    if not candidates:
-        return ()
+    if resolution.open:
+        return None
 
-    def shakiness(index: int) -> tuple[int, float, float]:
-        return (_tier(reads[index]), *_quality(reads[index]))
+    index = _overruled(reads, resolution, pinned)
+    if index is None and warnings:
+        index = _control(reads, pinned)
+    if index is None:
+        return None
 
-    remaining = sorted(candidates, key=lambda i: (shakiness(i), i))
-    chosen: list[int] = []
-    used: set[str] = set()
-    while remaining and len(chosen) < doubts:
-        # Among the reads tied for shakiest -- which on a board that read
-        # cleanly is most of them -- take one from a column not looked at yet,
-        # so the sample walks the board rather than stacking up in one corner
-        # of it.
-        front = shakiness(remaining[0])
-        tied = [i for i in remaining if shakiness(i) == front]
-        pick = min(tied, key=lambda i: (_group(reads[i].where) in used, i))
-        chosen.append(pick)
-        used.add(_group(reads[pick].where))
-        remaining.remove(pick)
-
-    control = _control(reads, candidates, chosen, used)
-    if control is not None:
-        chosen.append(control)
-
-    depths = column_depths(reads)
-    return tuple(
-        Check(
-            where=reads[index].where,
-            card=_resolved(index, reads[index], resolution, pinned),
-            depth_total=depths.get(_group(reads[index].where)),
-        )
-        # Board order, not doubt order: the eye works down the screen, and it
-        # also keeps the control card from announcing itself by its position.
-        for index in sorted(chosen)
+    read = reads[index]
+    return Check(
+        index=index,
+        where=read.where,
+        card=resolution.settled.get(index, read.card),
+        depth_total=column_depths(reads).get(_group(read.where)),
     )
 
 
-def _control(
-    reads: Sequence,
-    candidates: Sequence[int],
-    chosen: Sequence[int],
-    used: set[str],
-) -> int | None:
-    """The read to offer as the canary: the one the matcher won most clearly.
+def _overruled(reads: Sequence, resolution, pinned: dict[int, int]) -> int | None:
+    """The slot where the deck threw out the matcher's own winner.
 
-    Preferably from a column none of the shaky cards came from, so that a grid
-    anchored on the wrong slot cannot happen to line up on the only part of
-    the board being looked at.  ``None`` when every read is already up for
-    checking, which only happens on a board with almost nothing on it.
+    That is the only place the two verdicts disagree, so it is the only place
+    a human adds information.  Where several disagree, the one the matcher was
+    surest of: the deck is right far more often than not, and the sharpest
+    disagreement is where "far more often" is doing the most work.
     """
-    best: tuple[bool, float, float, int] | None = None
-    control = None
-    for index in candidates:
-        if index in chosen or not reads[index].confident:
+    best: tuple[float, float, int] | None = None
+    choice = None
+    for index, card in resolution.settled.items():
+        if index in pinned or card == reads[index].card:
             continue
-        margin, confidence = _quality(reads[index])
-        key = (_group(reads[index].where) in used, -margin, -confidence, index)
-        if best is None or key < best:
+        key = (*_quality(reads[index]), -index)
+        if best is None or key > best:
+            best, choice = key, index
+    return choice
+
+
+def _control(reads: Sequence, pinned: dict[int, int]) -> int | None:
+    """A card the matcher won outright, to hang the geometry on.
+
+    From the tableau, because the failure it is here for -- a grid anchored
+    one slot over -- shows up as a column that is not the column it is called,
+    and only a tableau card is named by its column.  ``None`` when nothing was
+    read confidently, which cannot happen on a board that resolved at all.
+    """
+    best: tuple[float, float, int] | None = None
+    control = None
+    for index, read in enumerate(reads):
+        if index in pinned or not read.confident or not _in_tableau(read.where):
+            continue
+        key = (*_quality(read), -index)
+        if best is None or key > best:
             best, control = key, index
     return control
 
 
-__all__ = ["DOUBTS", "Check", "column_depths", "spot_checks"]
+__all__ = ["Check", "column_depths", "spot_check"]

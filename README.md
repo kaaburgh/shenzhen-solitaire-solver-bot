@@ -5,15 +5,6 @@ it tells you whether the deal can still be won and, if so, the next five
 moves.
 
 ```
-Расклад прочитан. Сверять его целиком не надо — хватит этих карт:
-если ошибка есть, она почти наверняка в одной из них.
-• колонка 1, нижняя карта — 🔴4
-• колонка 2, верхняя карта — 🔴7
-• колонка 4, 3-я карта сверху — ⚫5
-• свободная ячейка 1 — 🟩
-🟢 бамбук · 🔴 монеты · ⚫ иероглифы · 🟩 🟥 ⬜ драконы · 🌸 цветок
-Сходится?
-
 ✅ Решение есть — 24 хода до победы.
 1. кол. 7 → в свободную ячейку: DR
 2. Схлопнуть зелёных драконов
@@ -268,37 +259,59 @@ resize beats against the original grid so which cards it smears depends on
 where they happen to sit.
 
 Sending the screenshot **as a file** still avoids all of this — it arrives
-untouched — and it is what /help suggests when a card does come out wrong. It
-is no longer a requirement.
+untouched. It is no longer a requirement, and it is no longer volunteered: the
+advice only appears on a reading that actually failed to add up, since that is
+the only time the size of the picture is worth anyone's attention. A picture
+that came in small and read correctly is a picture that read correctly.
 
 ## Confirming what was read
 
-The bot asks before spending time on a position, but it does not read the
-whole thing back. Forty cards is eight vertical stacks on screen and eight
-horizontal lines in a message — the layouts do not match, so confirming it
-means walking forty codes against forty pictures, and the effort is spread
-evenly over cards that deserve none of it. A card the matcher won by a mile is
-not where the mistake will be, and forty of those crowd out the two that are.
+Usually nothing is confirmed at all, because the deck has already done it.
+`validate` demands exactly the forty cards of a real deck, no more and no
+fewer, and a reading only becomes a board by passing it. That one fact rules
+out almost everything a confirmation step used to exist for: a screenshot of
+something else, a card dropped because its glyph would not classify, a grid
+whose columns came out shuffled — each of those loses or duplicates cards, and
+none survives the count. Reading forty cards back to someone who could have
+been told the answer is asking them to redo work that was already done
+properly.
 
-So four slots go up instead, named where they sit rather than in the bot's own
-grid notation — "column 4, the bottom card" is something you can find without
-counting. Three of them are the reads the matcher was least sure of. The
-fourth is the one it was *most* sure of, and that one is the point: the shaky
-cards catch a misread glyph, while the confident one catches everything a list
-of doubts cannot see — a screenshot of a different deal, a grid anchored one
-slot over, a board that moved on between the screenshot and the message. Those
-get every card wrong at once, so no single card looks suspicious, and the only
-way to notice is to check one the bot claims to be certain about. It comes
-from a column none of the shaky ones came from, for the same reason.
+What the deck cannot see is a reading where two mistakes cancel, and the
+matcher's own scores are what point at those. Every card arrives with two
+independent verdicts on it: the template match, and the deck arithmetic that
+had to fit it alongside thirty-nine others. Where both say the same thing
+there is nothing left to ask, so the bot goes straight to the answer, with the
+whole board and a way to correct it one button away on the reply. Where the
+deck *overruled* the matcher, one slot goes up — the single place the two ways
+of reading the board disagreed.
+
+That question comes with a picture of the card. The screenshots that produce
+questions are exactly the ones that came in small, so "column 6, the bottom
+card — is that the white dragon?" is otherwise answerable only by going back
+to the game or squinting at a thumbnail. The slot is cut out of the picture
+that was sent, with a card width of board around it for context, outlined in a
+colour the game does not use, and enlarged until it is comfortably readable.
+Across the ten screenshot fixtures eight go through without a word and two ask
+about one card each.
+
+One failure the deck genuinely cannot catch is geometric. When the layout pass
+cannot find the dragon buttons it falls back to guessing which grid slot the
+leftmost column occupies, and a wrong guess slides every column sideways: all
+forty cards are present, the deck is content, and every column is mislabelled.
+That is the one case that still puts up a card the matcher was *sure* of,
+named by the column it sits in, because saying the column out loud is what
+catches the shift.
 
 Cards are shown as colour and rank — `🔴9` rather than `R9`. The suit *is* a
 colour on the card, and a letter standing for it is one translation step in
 the middle of a job that is nothing but matching. Telegram has no coloured
 text, so the colour arrives as a glyph that carries its own: circles are the
 numbered suits, squares are the dragons, so shape says which kind of card
-before colour says which one. The whole board is still one button away for
-anyone who would rather look at all of it, and typing a position out skips the
-sampling entirely — there is nothing to be unsure of.
+before colour says which one. Slots are named where they sit rather than in
+the bot's own grid notation — "column 4, the bottom card" is something you can
+find without counting. Typing a position out still gets it echoed back in
+full: that one is the user's own text rather than a reading, and a typo in it
+is exactly what the echo is for.
 
 ## Rules
 

@@ -29,8 +29,9 @@ from ..notation import (
 from ..solver import SolveResult, Status, solve
 from ..textio import parse_board
 from ..vision import LayoutError, RecognitionError, TemplateBank, load_image, recognize
+from ..vision.crop import card_crop
 from ..vision.resolve import Unresolvable, resolve, widest_options
-from ..vision.verify import Check, column_depths, spot_checks
+from ..vision.verify import Check, column_depths, spot_check
 from .i18n import normalise_lang, t
 from .storage import Session, Sessions
 
@@ -109,16 +110,89 @@ def _slot(reads: Sequence, index: int, lang: str) -> str:
     )
 
 
-def _check_lines(checks: Sequence[Check], lang: str) -> list[str]:
-    return [
-        t(
-            lang,
-            "check_line",
-            slot=describe_slot(check.where, lang, depth_total=check.depth_total),
-            card=card_mark(check.card),
+def _crops(data: bytes, result, indices: Sequence[int]) -> dict[int, bytes]:
+    """A picture of each of ``indices``, cut from the screenshot.
+
+    Taken while the bytes are still in hand: the question that needs the
+    picture may not be asked until several messages later, and by then the
+    only thing kept is what fits in the session.  Best effort throughout -- a
+    question with no picture beside it is the question the bot used to ask,
+    which is worse but not broken.
+    """
+    if not indices:
+        return {}
+    try:
+        image = load_image(data)
+    except Exception:  # pragma: no cover -- it decoded once already
+        log.warning("could not decode the screenshot to cut a crop from it")
+        return {}
+
+    card_w = result.source_card_w or 0
+    crops: dict[int, bytes] = {}
+    for index in indices:
+        try:
+            crop = card_crop(image, result.source_box(index), card_w)
+        except Exception:  # pragma: no cover -- defensive
+            log.exception("could not cut a crop for read %d", index)
+            continue
+        if crop is not None:
+            crops[index] = crop
+    return crops
+
+
+async def _cut_crops(data: bytes, result, indices: Sequence[int]) -> dict[int, bytes]:
+    """:func:`_crops`, off the event loop.
+
+    Decoding and resizing a screenshot is the same kind of work as reading it
+    in the first place, and it is a dozen crops rather than one.
+    """
+    if not indices:
+        return {}
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(
+        None, functools.partial(_crops, data, result, list(indices))
+    )
+
+
+def _is_photo(message) -> bool:
+    """Was this message sent as a picture with a caption?
+
+    Telegram changes a caption and a body of text through different methods
+    and rejects the wrong one outright, so any edit of a message the bot may
+    have sent either way has to ask first.
+    """
+    return bool(getattr(message, "photo", None))
+
+
+async def _replace(query, text: str, *, reply_markup=None) -> None:
+    """Put ``text`` in place of whatever the pressed button was attached to."""
+    if _is_photo(query.message):
+        await query.edit_message_caption(
+            caption=text, parse_mode=ParseMode.HTML, reply_markup=reply_markup
         )
-        for check in checks
-    ]
+        return
+    await query.edit_message_text(
+        text, parse_mode=ParseMode.HTML, reply_markup=reply_markup
+    )
+
+
+async def _send(message, text: str, *, photo: bytes | None = None, reply_markup=None):
+    """Say ``text``, with a picture above it where there is one to show."""
+    if photo is not None:
+        try:
+            return await message.reply_photo(
+                photo=photo,
+                caption=text,
+                parse_mode=ParseMode.HTML,
+                reply_markup=reply_markup,
+            )
+        except TelegramError:
+            # Telegram refuses photos for reasons that have nothing to do with
+            # the question being asked; the question still has to be asked.
+            log.warning("could not send the crop; falling back to text")
+    return await message.reply_text(
+        text, parse_mode=ParseMode.HTML, reply_markup=reply_markup
+    )
 
 
 # --- commands --------------------------------------------------------------
@@ -165,7 +239,10 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         return
 
     session.pending = None
-    await _accept_board(update.message, session, board, uncertain=[], warnings=[])
+    _hold(session, board)
+    # A typed position has nothing to be unsure of and nothing to sample, so
+    # it goes back in full for the user to check against what they meant.
+    await _confirm(update.message, session)
 
 
 def looks_like_image(document) -> bool:
@@ -244,6 +321,8 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             return
         lines = [t(session.lang, "bad_reading", reason=_reason(exc, session.lang))]
         if exc.narrow:
+            # The one place the "send it as a file" advice belongs: the
+            # picture was too small *and* that is why this failed.
             lines.append(t(session.lang, "bad_reading_narrow", card_w=exc.card_w))
         if exc.deck is not None:
             # Right above the reading it decodes: the complaint named cards in
@@ -273,21 +352,24 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             resolution=resolution,
             level=resolution.level,
             warnings=result.warnings,
-            deduced=result.deduced,
-            narrow=result.narrow,
+            # Every slot a question could still land on, so that each one can
+            # show what it is asking about long after the bytes are gone.
+            crops=await _cut_crops(data, result, [u.index for u in resolution.unknowns]),
         )
         await _ask(message, session, intro=True)
         return
 
-    await _accept_board(
+    check = spot_check(result.reads, resolution, warnings=result.warnings)
+    crops = await _cut_crops(data, result, [check.index] if check else [])
+    await _accept_reading(
         message,
+        context,
         session,
         result.state,
         uncertain=_open_cards(resolution, result.reads, session.lang),
         warnings=result.warnings,
-        deduced=result.deduced,
-        narrow=result.narrow,
-        checks=spot_checks(result.reads, resolution),
+        check=check,
+        crop=crops.get(check.index) if check else None,
     )
 
 
@@ -356,13 +438,43 @@ def _for_current_interview(session: Session, raw_token: str) -> bool:
     return session.pending is not None and session.pending.token == int(raw_token)
 
 
-async def _ask(message, session: Session, *, intro: bool = False, edit=None) -> None:
-    """Put the next open card to the user, as buttons.
+def _for_live_question(session: Session, raw_token: str, raw_index: str) -> bool:
+    """Is this button the one the bot is waiting on right now?
+
+    Two ways it can fail to be.  It can belong to an earlier screenshot, where
+    its read index means a different card entirely; or it can belong to an
+    earlier question of this same interview, since a question carrying a crop
+    is a new message rather than an edit and leaves the keyboard before it
+    standing.  Both name a slot the interview has moved past, and neither
+    "answer it" nor "widen it" means anything there.
+    """
+    return (
+        _for_current_interview(session, raw_token)
+        and session.pending.asked == int(raw_index)
+    )
+
+
+def _stale(session: Session, raw_token: str) -> str:
+    """Why a button did not do anything -- which of the two ways it was old."""
+    key = "ask_superseded" if _for_current_interview(session, raw_token) else "ask_expired"
+    return t(session.lang, key)
+
+
+async def _ask(message, session: Session, *, intro: bool = False, query=None) -> None:
+    """Put the next open card to the user, as buttons and a picture of the slot.
 
     One question at a time on purpose.  Each answer is fed back through the
     deck before the next question is chosen, and that usually settles the
     others by elimination -- which is the difference between confirming one
     card and confirming five.
+
+    The next question replaces the one just answered only when both are plain
+    text.  A question that has a crop cannot be an edit of anything, since a
+    message cannot grow a photo; and a question that has none must not be
+    edited over one that did, or the picture of the card already dealt with
+    would be left standing above a question about a different slot.  Either
+    way it becomes a new message, which leaves the previous keyboard live in
+    the chat -- and that is what :attr:`Pending.asked` is for.
     """
     pending = session.pending
     resolution = pending.resolution
@@ -375,9 +487,6 @@ async def _ask(message, session: Session, *, intro: bool = False, edit=None) -> 
     lines = []
     if intro:
         lines.append(t(session.lang, "ask_intro"))
-        if pending.deduced:
-            lines.append(t(session.lang, "ask_deduced", n=pending.deduced))
-        lines.append("")
     lines.append(t(session.lang, "ask_slot", slot=_slot(pending.reads, index, session.lang)))
     remaining = len(resolution.open) - 1
     if remaining:
@@ -393,11 +502,21 @@ async def _ask(message, session: Session, *, intro: bool = False, edit=None) -> 
             ]
         ]
     )
-    send = edit or message.reply_text
-    await send("\n".join(lines), parse_mode=ParseMode.HTML, reply_markup=keyboard)
+    pending.asked = index
+
+    crop = pending.crops.get(index)
+    text = "\n".join(lines)
+    if crop is None and query is not None and not _is_photo(query.message):
+        await query.edit_message_text(
+            text, parse_mode=ParseMode.HTML, reply_markup=keyboard
+        )
+        return
+    await _send(message, text, photo=crop, reply_markup=keyboard)
 
 
-async def _answer_question(query, session: Session, index: int, card: int) -> None:
+async def _answer_question(
+    query, context: ContextTypes.DEFAULT_TYPE, session: Session, index: int, card: int
+) -> None:
     """Take one answer, re-run the deck, and either ask again or show the board."""
     pending = session.pending
     pinned = dict(pending.pinned)
@@ -417,22 +536,20 @@ async def _answer_question(query, session: Session, index: int, card: int) -> No
     pending.resolution = resolution
 
     if resolution.open and resolution.interviewable:
-        await _ask(session=session, message=query.message, edit=query.edit_message_text)
+        await _ask(session=session, message=query.message, query=query)
         return
 
     session.pending = None
-    await _accept_board(
+    check = spot_check(pending.reads, resolution, pinned, warnings=pending.warnings)
+    await _accept_reading(
         query.message,
+        context,
         session,
         resolution.state,
         uncertain=_open_cards(resolution, pending.reads, session.lang),
         warnings=pending.warnings,
-        checks=spot_checks(pending.reads, resolution, pinned),
-        # `settled` is recomputed from scratch and counts the answers just
-        # given as settled too -- they are, but the user gave them, so they do
-        # not belong in "cards I worked out for you".
-        deduced=len(resolution.settled) - len(pinned),
-        narrow=pending.narrow,
+        check=check,
+        crop=pending.crops.get(check.index) if check else None,
     )
 
 
@@ -460,63 +577,114 @@ async def _offer_everything(query, session: Session, index: int) -> None:
         _option_rows(pending.token, index, options)
         + [[InlineKeyboardButton(t(session.lang, "btn_type"), callback_data="fix")]]
     )
-    await query.edit_message_text(
-        "\n".join(lines), parse_mode=ParseMode.HTML, reply_markup=keyboard
-    )
+    # In place, so the crop of the slot stays above the wider list -- this is
+    # the same question, and it is the one question where seeing the card
+    # matters most, since the shortlist has just been said not to contain it.
+    await _replace(query, "\n".join(lines), reply_markup=keyboard)
 
 
-async def _accept_board(
-    message,
-    session: Session,
-    board: State,
-    *,
-    uncertain: list[str],
-    warnings: list[str],
-    deduced: int = 0,
-    narrow: int | None = None,
-    checks: Sequence[Check] = (),
-) -> None:
-    """Ask for a nod before spending time on the position.
-
-    With ``checks`` that is a spot check of three or four slots rather than
-    the whole board -- see :mod:`shenzhen.vision.verify` for why those four.
-    The board itself stays one button away, for anyone who would rather look
-    at all of it; a position that was typed out has nothing to sample, so it
-    gets the board directly.
-    """
+def _hold(session: Session, board: State) -> None:
+    """Take ``board`` as the position, dropping whatever was solved before."""
     session.board = board
     session.result = None
     session.shown = 0
+    session.unconfirmed = False
 
-    if checks:
-        lines = [t(session.lang, "check_head")]
-        lines.extend(_check_lines(checks, session.lang))
-        lines.append(t(session.lang, "legend"))
+
+async def _accept_reading(
+    message,
+    context: ContextTypes.DEFAULT_TYPE,
+    session: Session,
+    board: State,
+    *,
+    uncertain: Sequence[str] = (),
+    warnings: Sequence[str] = (),
+    check: Check | None = None,
+    crop: bytes | None = None,
+) -> None:
+    """Take a board read off a picture, asking only about what is in doubt.
+
+    A reading nothing disagreed with -- see :mod:`shenzhen.vision.verify` --
+    goes straight to the solver.  It is a position the deck has already proved
+    complete, so a confirmation step would be the bot reading its own homework
+    back and charging a tap for it.  The answer carries the way out instead:
+    the whole board is one button away, and so is correcting it.
+    """
+    _hold(session, board)
+
+    if check is None and not uncertain and not warnings:
+        session.unconfirmed = True
+        await _solve_and_reply(message, context, session)
+        return
+
+    await _confirm(message, session, uncertain=uncertain, warnings=warnings, check=check, crop=crop)
+
+
+async def _confirm(
+    message,
+    session: Session,
+    *,
+    uncertain: Sequence[str] = (),
+    warnings: Sequence[str] = (),
+    check: Check | None = None,
+    crop: bytes | None = None,
+) -> None:
+    """Ask for a nod before spending time on the position.
+
+    With a ``check`` that is one slot and a picture of it, which is a question
+    that can be answered from the chat rather than from the game.  Without
+    one -- a position that was typed out, or one with more open cards than an
+    interview is worth -- it is the board itself.
+    """
+    if check is not None:
+        lines = [
+            t(
+                session.lang,
+                "check_one",
+                slot=describe_slot(check.where, session.lang, depth_total=check.depth_total),
+                card=card_mark(check.card),
+            ),
+            t(session.lang, "legend"),
+        ]
     else:
-        lines = [t(session.lang, "board_read"), _pre(render_board(board, session.lang))]
-    if deduced:
-        lines.append(t(session.lang, "ask_deduced", n=deduced))
+        lines = [
+            t(session.lang, "board_read"),
+            _pre(render_board(session.board, session.lang)),
+        ]
     if uncertain:
-        # Its own lines rather than one run-on sentence: these read the same
-        # way as the spot check above them, and they are checked the same way.
+        # Its own lines rather than one run-on sentence: these are checked
+        # against the screen one at a time, so they are read that way.
         lines.append(t(session.lang, "uncertain"))
         lines.extend(uncertain)
     if warnings:
         lines.append(t(session.lang, "warnings", items="; ".join(warnings)))
-    if narrow is not None:
-        lines.append(t(session.lang, "board_narrow", card_w=narrow))
-    lines.append(t(session.lang, "check_confirm" if checks else "board_confirm"))
+    if check is None:
+        lines.append(t(session.lang, "board_confirm"))
 
     rows = [
         [InlineKeyboardButton(t(session.lang, "btn_correct"), callback_data="solve")],
         [InlineKeyboardButton(t(session.lang, "btn_fix"), callback_data="fix")],
     ]
-    if checks:
+    if check is not None:
         rows[1].append(
             InlineKeyboardButton(t(session.lang, "btn_board"), callback_data="board")
         )
-    await message.reply_text(
-        "\n".join(lines), parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(rows)
+    await _send(
+        message, "\n".join(lines), photo=crop, reply_markup=InlineKeyboardMarkup(rows)
+    )
+
+
+def _escape_hatch(session: Session) -> InlineKeyboardMarkup | None:
+    """The way back for a reading the user never got the chance to confirm."""
+    if not session.unconfirmed:
+        return None
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(t(session.lang, "btn_board"), callback_data="board"),
+                InlineKeyboardButton(t(session.lang, "btn_fix"), callback_data="fix"),
+            ]
+        ]
     )
 
 
@@ -539,17 +707,17 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     if data.startswith("pick:"):
         await query.answer()
         _, raw_token, raw_index, raw_card = data.split(":", 3)
-        if not _for_current_interview(session, raw_token):
-            await query.message.reply_text(t(session.lang, "ask_expired"))
+        if not _for_live_question(session, raw_token, raw_index):
+            await query.message.reply_text(_stale(session, raw_token))
             return
-        await _answer_question(query, session, int(raw_index), int(raw_card))
+        await _answer_question(query, context, session, int(raw_index), int(raw_card))
         return
 
     if data.startswith("wide:"):
         await query.answer()
         _, raw_token, raw_index = data.split(":", 2)
-        if not _for_current_interview(session, raw_token):
-            await query.message.reply_text(t(session.lang, "ask_expired"))
+        if not _for_live_question(session, raw_token, raw_index):
+            await query.message.reply_text(_stale(session, raw_token))
             return
         await _offer_everything(query, session, int(raw_index))
         return
@@ -572,9 +740,9 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
     if data == "board":
         await query.answer()
-        # The whole position, for anyone who would rather check all of it than
-        # the four slots offered.  In colour, since that is the version worth
-        # holding up against the screen.
+        # The whole position, for anyone who would rather check all of it
+        # themselves.  In colour, since that is the version worth holding up
+        # against the screen.
         if session.board is None:
             await query.message.reply_text(t(session.lang, "no_board"))
             return
@@ -592,6 +760,8 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
     if data == "solve":
         await query.answer()
+        # They have looked at it and said yes, so the answer needs no way back.
+        session.unconfirmed = False
         await _solve_and_reply(query.message, context, session)
         return
 
@@ -611,7 +781,9 @@ async def _solve_and_reply(message, context: ContextTypes.DEFAULT_TYPE, session:
         await message.reply_text(t(session.lang, "busy"))
         return
     if session.board.is_won:
-        await message.reply_text(t(session.lang, "already_won"))
+        await message.reply_text(
+            t(session.lang, "already_won"), reply_markup=_escape_hatch(session)
+        )
         return
 
     config = _config(context)
@@ -641,16 +813,24 @@ async def _solve_and_reply(message, context: ContextTypes.DEFAULT_TYPE, session:
     session.result = result
     session.shown = 0
 
+    # A verdict on a reading nobody confirmed carries the way back to it --
+    # most of all "not winnable", which is exactly the answer worth doubting
+    # if a card came out wrong.
+    hatch = _escape_hatch(session)
+
     if result.status is Status.UNSOLVABLE:
-        await notice.edit_text(t(session.lang, "unsolvable"))
+        await notice.edit_text(t(session.lang, "unsolvable"), reply_markup=hatch)
         return
     if result.status is Status.UNKNOWN:
         await notice.edit_text(
-            t(session.lang, "unknown", nodes=result.nodes, elapsed=result.elapsed)
+            t(session.lang, "unknown", nodes=result.nodes, elapsed=result.elapsed),
+            reply_markup=hatch,
         )
         return
 
-    await notice.edit_text(t(session.lang, "solved", total=len(result.steps)))
+    await notice.edit_text(
+        t(session.lang, "solved", total=len(result.steps)), reply_markup=hatch
+    )
     await _send_moves(message, session)
 
 

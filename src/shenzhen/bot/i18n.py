@@ -53,12 +53,8 @@ STRINGS: dict[str, dict[str, str]] = {
         "solving": "Считаю…",
         "board_read": "Вот что я вижу:",
         "board_confirm": "Всё верно?",
-        "check_head": (
-            "Расклад прочитан. Сверять его целиком не надо — хватит этих карт: "
-            "если ошибка есть, она почти наверняка в одной из них."
-        ),
+        "check_one": "Одну карту сверь, пожалуйста: {slot} — тут {card}?",
         "check_line": "• {slot} — {card}",
-        "check_confirm": "Сходится?",
         "legend": (
             "🟢 бамбук · 🔴 монеты · ⚫ иероглифы · "
             "🟩 🟥 ⬜ драконы · 🌸 цветок · 🔒 схлопнутые драконы"
@@ -70,17 +66,9 @@ STRINGS: dict[str, dict[str, str]] = {
         "btn_fix": "✏️ Исправить",
         "btn_board": "🔍 Весь расклад",
         "btn_more": "Ещё 5 ходов",
-        "ask_intro": (
-            "❓ Несколько карт прочитались нечётко. Большую часть я досчитал "
-            "по колоде — в ней каждая карта ровно одна, так что почти всё "
-            "определяется однозначно. Осталось уточнить остальное:"
-        ),
+        "ask_intro": "❓ Не всё прочиталось однозначно. Уточни:",
         "ask_slot": "<b>{slot}</b> — что там?",
         "ask_left": "После этого останется вопросов: {n}",
-        "ask_deduced": (
-            "Ещё {n} карт(ы) прочитались нечётко, но по колоде подходил ровно "
-            "один вариант — подставил их сам."
-        ),
         "ask_other": "Всё, что подходит сюда по колоде:",
         "ask_no_options": (
             "По колоде сюда не подходит ничего — видимо, ошибка в другой "
@@ -91,10 +79,7 @@ STRINGS: dict[str, dict[str, str]] = {
             "ошибка где-то ещё. Выбери другой вариант или введи расклад текстом."
         ),
         "ask_expired": "Этот вопрос уже неактуален — пришли скриншот заново.",
-        "board_narrow": (
-            "Картинка мелковата — карты {card_w} px в ширину. Расклад сошёлся "
-            "по колоде, так что он почти наверняка верный, но глазом проверь."
-        ),
+        "ask_superseded": "На этот вопрос я уже не жду ответа — отвечай на последний.",
         "btn_other": "Другое…",
         "btn_type": "✏️ Введу текстом",
         "fix_hint": (
@@ -199,13 +184,8 @@ STRINGS: dict[str, dict[str, str]] = {
         "solving": "Thinking…",
         "board_read": "Here is what I see:",
         "board_confirm": "Is that right?",
-        "check_head": (
-            "I have read the board. No need to check all of it — these cards "
-            "are enough: if anything is wrong, it is almost certainly one of "
-            "them."
-        ),
+        "check_one": "One card worth a look: {slot} — is that {card}?",
         "check_line": "• {slot} — {card}",
-        "check_confirm": "Do those match?",
         "legend": (
             "🟢 bamboo · 🔴 coins · ⚫ characters · "
             "🟩 🟥 ⬜ dragons · 🌸 flower · 🔒 collapsed dragons"
@@ -217,17 +197,9 @@ STRINGS: dict[str, dict[str, str]] = {
         "btn_fix": "✏️ Fix it",
         "btn_board": "🔍 The whole board",
         "btn_more": "Next 5 moves",
-        "ask_intro": (
-            "❓ A few cards did not come out clearly. Most of them the deck "
-            "settled for me — every card in it exists exactly once, so nearly "
-            "everything follows by elimination. What is left to ask:"
-        ),
+        "ask_intro": "❓ Some cards did not come out clearly. Help me with these:",
         "ask_slot": "<b>{slot}</b> — what is it?",
         "ask_left": "Questions left after this one: {n}",
-        "ask_deduced": (
-            "Another {n} card(s) read unclearly, but only one reading fitted "
-            "the deck, so I filled those in myself."
-        ),
         "ask_other": "Everything the deck still allows here:",
         "ask_no_options": (
             "Nothing fits here at all, so the mistake is in some other card. "
@@ -238,11 +210,7 @@ STRINGS: dict[str, dict[str, str]] = {
             "misread. Pick another one, or type the position out."
         ),
         "ask_expired": "That question is out of date — send the screenshot again.",
-        "board_narrow": (
-            "The picture came in small — cards {card_w}px wide. The position "
-            "does add up against the deck, so it is very probably right, but "
-            "give it a look."
-        ),
+        "ask_superseded": "That question has moved on — answer the latest one.",
         "btn_other": "Other…",
         "btn_type": "✏️ I will type it",
         "fix_hint": (

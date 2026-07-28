@@ -113,11 +113,27 @@ class Recognition:
     #: go at it.  The layout describes the enlarged copy, so it is no longer
     #: the place to ask how small the thing the user actually sent was.
     source_card_w: int | None = None
+    #: what :func:`enlarge` multiplied the picture by before it was read, so a
+    #: box measured on the enlarged copy can be put back on the original --
+    #: which is the picture worth showing anyone.
+    scale: int = 1
     #: how the board was arrived at, and what is still open about it.  Carried
     #: so the bot can ask about the open cards and rebuild the board from the
     #: answers without holding on to the screenshot.
     skeleton: Skeleton | None = None
     resolution: Resolution | None = None
+
+    def source_box(self, index: int) -> Box:
+        """Where read ``index`` sits in the picture the user actually sent."""
+        box = self.reads[index].box
+        if self.scale <= 1:
+            return box
+        return Box(
+            box.x // self.scale,
+            box.y // self.scale,
+            max(1, box.w // self.scale),
+            max(1, box.h // self.scale),
+        )
 
     @property
     def uncertain_indices(self) -> list[int]:
@@ -284,16 +300,9 @@ def recognize(
         for depth, box in enumerate(group):
             entry = read(box, f"{index + 1}.{depth + 1}")
             if entry is None:
-                # The layout pass deliberately errs on the side of proposing a
-                # card boundary: on a small image a stroke in the large glyph of
-                # an exposed dragon can look like the edge of another card.  A
-                # glyph-less proposal is therefore not a card read, and keeping
-                # its provisional depth as a warning can contradict the legal
-                # board below ("its only card", then "card 2 unreadable").  If
-                # this really was a card, the deck check in ``resolve`` will
-                # reject the incomplete skeleton; if that check succeeds, the
-                # proposal was necessarily layout noise and there is nothing for
-                # the user to verify.
+                # A glyph-less layout proposal is not a card read.  Real missing
+                # cards are rejected by the deck check; keeping the provisional
+                # slot as a warning only reports false splits as extra cards.
                 continue
             found.append(entry)
         columns.append(tuple(found))
@@ -367,6 +376,7 @@ def recognize(
         warnings=warnings,
         layout=layout,
         source_card_w=source_card_w,
+        scale=scale,
         skeleton=skeleton,
         resolution=resolution,
     )
