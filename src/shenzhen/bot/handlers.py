@@ -230,12 +230,11 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await _ask(message, session, intro=True)
         return
 
-    uncertain = [f"{r.where} = {card_code(r.card)}" for r in result.uncertain]
     await _accept_board(
         message,
         session,
         result.state,
-        uncertain=uncertain,
+        uncertain=_open_cards(resolution, result.reads),
         warnings=result.warnings,
         deduced=result.deduced,
         narrow=result.narrow,
@@ -244,6 +243,35 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 def _recognize_bytes(data: bytes, bank: TemplateBank):
     return recognize(load_image(data), bank)
+
+
+#: how many alternatives to name for one card before the list stops helping
+OPTIONS_LISTED = 3
+
+
+def _open_cards(resolution, reads: Sequence) -> list[str]:
+    """The cards the deck could not pin down, each with what it might be.
+
+    Named off the resolution rather than off the raw reads, because those two
+    disagree exactly where it matters: the board being shown holds the deck's
+    best surviving reading of an open card, while the matcher's own winner is
+    whatever lost. Listing the latter beside the former tells the user their
+    board says G3 and the bot is unsure it is G8 -- two claims about one slot,
+    neither of them the question actually being asked.
+
+    And the alternatives come along, since this is the list the user is being
+    asked to check against the screen. "3.4 is G3 or G8" says where to look
+    and what to look for; "3.4 = G3" only reads like a claim.
+    """
+    if resolution is None:
+        return []
+    lines = []
+    for index in resolution.open:
+        options = resolution.options(index)[:OPTIONS_LISTED]
+        lines.append(
+            f"{reads[index].where} = " + " / ".join(card_code(card) for card in options)
+        )
+    return lines
 
 
 # --- asking about cards the deck could not settle --------------------------
@@ -337,15 +365,11 @@ async def _answer_question(query, session: Session, index: int, card: int) -> No
         return
 
     session.pending = None
-    uncertain = [
-        f"{pending.reads[i].where} = {card_code(resolution.options(i)[0])}"
-        for i in resolution.open
-    ]
     await _accept_board(
         query.message,
         session,
         resolution.state,
-        uncertain=uncertain,
+        uncertain=_open_cards(resolution, pending.reads),
         warnings=pending.warnings,
         # `settled` is recomputed from scratch and counts the answers just
         # given as settled too -- they are, but the user gave them, so they do

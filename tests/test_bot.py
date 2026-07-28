@@ -11,7 +11,7 @@ import pytest
 from shenzhen.bot import handlers
 from shenzhen.bot.handlers import BotConfig
 from shenzhen.bot.storage import Sessions
-from shenzhen.cards import parse_card
+from shenzhen.cards import card_code, parse_card
 from shenzhen.game import deal
 from shenzhen.notation import board_to_text
 
@@ -482,6 +482,34 @@ async def test_answering_the_one_question_settles_the_rest_and_shows_the_board(c
     session = context.application.bot_data["sessions"].get(1)
     assert session.pending is None
     assert session.board == recognition.state
+
+
+@pytest.mark.asyncio
+async def test_cards_too_many_to_ask_about_are_named_as_the_board_reads_them(
+    context, monkeypatch
+):
+    """Past the point where an interview is worth anyone's time the board is
+    shown anyway, with the cards the deck could not pin down listed beside it.
+
+    That list has to agree with the board above it. The matcher's own winner
+    for an open card is by definition the reading that lost, so naming it here
+    puts two different cards in one slot -- the board says G3, the note says
+    "not sure about G8" -- and answers a question nobody asked. What the user
+    needs is the slot and the choice: G3 or G8, go and look."""
+    monkeypatch.setattr("shenzhen.vision.resolve.MAX_QUESTIONS", 0)
+    view, recognition = _screenshot({"1.3": ["G3", "G8"], "2.3": ["G8", "G3"]})
+    log: list = []
+    await send_photo(context, log, recognition, monkeypatch)
+
+    body = texts(log)
+    assert "что там?" not in body, body      # no interview
+    assert buttons(log) == ["solve", "fix"]  # straight to confirm-or-fix
+
+    note = next(line for line in body.splitlines() if line.startswith("Не уверен"))
+    shown = card_code(recognition.state.columns[0][2])
+    assert f"1.3 = {shown}" in note, note    # the card the board actually shows
+    assert "G3" in note and "G8" in note, note   # and what else it could be
+    assert view.card_at("1.3") == parse_card("G3")
 
 
 @pytest.mark.asyncio
