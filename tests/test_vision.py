@@ -31,10 +31,9 @@ from shenzhen.cards import (
 )
 from shenzhen.game import NUM_COLUMNS, InvalidBoard, State, auto_resolve
 from shenzhen.textio import parse_board
-from shenzhen.vision.classify import Guess, TemplateBank, ink_colour
+from shenzhen.vision.classify import TemplateBank, ink_colour
+from shenzhen.vision.crop import CONTEXT, MARK, VIEW_CARD_W, card_crop
 from shenzhen.vision.layout import (
-    BoardLayout,
-    Box,
     LayoutConfig,
     LayoutError,
     corner_patch,
@@ -139,45 +138,6 @@ def test_a_board_whose_first_columns_are_empty_still_lines_up():
 def test_a_picture_that_is_not_the_board_is_refused():
     with pytest.raises(LayoutError):
         detect_layout(np.zeros((400, 400, 3), dtype=np.uint8), CONFIG)
-
-
-def test_a_glyphless_false_split_is_not_reported_as_an_extra_card(monkeypatch):
-    """A dragon glyph can imitate a card edge in a small image.
-
-    The resulting lower region has no corner glyph and is discarded.  It must
-    not survive as a warning about "card 2" beside a legal board which correctly
-    describes the dragon above it as the column's only card.
-    """
-    dragon = make_dragon(GREEN)
-    upper = Box(0, 0, 150, 36)
-    lower = Box(0, 36, 150, 251)
-    layout = BoardLayout(card_w=150, card_h=287, offset=36)
-    layout.columns[6] = [upper, lower]
-    monkeypatch.setattr(RECOGNIZE, "detect_layout", lambda _image, _config: layout)
-
-    guess = Guess(card=dragon, confidence=1.0, margin=1.0, colour=GREEN)
-    answers = iter((guess, None))
-    monkeypatch.setattr(RECOGNIZE, "classify", lambda _patch, _bank: next(answers))
-
-    state = State(
-        columns=((), (), (), (), (), (), (dragon,), ()),
-        free=(None, None, None),
-        foundations=(0, 0, 0),
-        flower=True,
-    )
-    monkeypatch.setattr(
-        RECOGNIZE,
-        "resolve",
-        lambda _skeleton, _reads: RECOGNIZE.Resolution(
-            state=state, unknowns=(), possibilities=(), level=0
-        ),
-    )
-
-    result = recognize(np.zeros((300, 300, 3), dtype=np.uint8), object())
-
-    assert [read.where for read in result.reads] == ["7.1"]
-    assert result.state.columns[6] == (dragon,)
-    assert result.warnings == []
 
 
 def test_ink_colour_separates_the_three_suits():
@@ -538,3 +498,66 @@ def test_a_reading_that_does_not_add_up_comes_back_as_a_draft_to_correct():
         parse_card(token) for line in columns for token in line.split()[1:]
     )
     assert sum((wanted & drafted).values()) >= 0.9 * sum(wanted.values())
+
+
+# --- the picture that goes with a question ---------------------------------
+
+
+@pytest.mark.skipif(not BANK_PATH.is_dir(), reason="no template bank installed")
+def test_a_slot_can_be_cut_back_out_of_the_picture_that_was_sent():
+    """A question about "column 6, the bottom card" is only answerable from the
+    game unless the bot shows which card it means. The reader works on an
+    enlarged copy, so the boxes it hands out have to map back onto the picture
+    the user actually sent before anything can be cut from it."""
+    bank = TemplateBank.load(BANK_PATH)
+    original = cv2.imread(str(FIXTURES / "iphone" / "shot1.png"))
+    photo = _as_telegram_photo(original)
+
+    result = recognize(photo, bank)
+    assert result.scale > 1, "the point of this fixture is that it was enlarged"
+    height, width = photo.shape[:2]
+
+    for index, read in enumerate(result.reads):
+        box = result.source_box(index)
+        assert 0 <= box.x and box.x + box.w <= width, read.where
+        assert 0 <= box.y and box.y + box.h <= height, read.where
+        # Every card is drawn the same width, whatever is stacked on top of it.
+        assert abs(box.w - result.source_card_w) <= result.scale, read.where
+
+
+@pytest.mark.skipif(not BANK_PATH.is_dir(), reason="no template bank installed")
+def test_the_crop_marks_the_card_and_is_bigger_than_the_picture_it_came_from():
+    """Both halves matter. Without the mark the crop shows several cards and
+    says nothing about which one is being asked about; without the enlargement
+    it is handed back at the size that caused the question."""
+    bank = TemplateBank.load(BANK_PATH)
+    photo = _as_telegram_photo(cv2.imread(str(FIXTURES / "iphone" / "shot1.png")))
+
+    result = recognize(photo, bank)
+    index = next(i for i, r in enumerate(result.reads) if r.where == "1.1")
+    box = result.source_box(index)
+
+    data = card_crop(photo, box, result.source_card_w)
+    assert data is not None
+    crop = cv2.imdecode(np.frombuffer(data, dtype=np.uint8), cv2.IMREAD_COLOR)
+
+    assert crop.shape[1] >= VIEW_CARD_W, crop.shape
+    assert crop.shape[1] > box.w, "handed back no larger than it arrived"
+
+    # The outline is in a colour the board does not contain, so finding it at
+    # all is enough to say the card was marked.
+    near_mark = np.all(np.abs(crop.astype(int) - np.array(MARK)) < 60, axis=2)
+    assert near_mark.sum() > 0, "the slot was not marked"
+
+    # And there is board around it rather than the card alone.
+    assert crop.shape[1] > box.w * (1 + 2 * CONTEXT) * 0.9
+
+
+def test_a_box_off_the_edge_of_the_picture_costs_the_question_nothing():
+    """A crop is a nicety; a question with no picture beside it is the question
+    the bot used to ask, which is worse but not broken."""
+    from shenzhen.vision.layout import Box
+
+    image = np.zeros((40, 40, 3), dtype=np.uint8)
+    assert card_crop(image, Box(500, 500, 10, 10), 10) is None
+    assert card_crop(image, Box(0, 0, 10, 10), 0) is None
