@@ -17,7 +17,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 import pytest
-from fake_board import OFFSET, render
+from fake_board import CARD_W, OFFSET, TABLEAU_Y, render, slot_x
 
 from shenzhen.cards import (
     BLACK,
@@ -75,6 +75,30 @@ def test_every_column_is_cut_into_the_right_number_of_cards():
         state = auto_resolve(raw_deal(seed))[0]
         layout = detect_layout(render(state), CONFIG)
         assert [len(c) for c in layout.columns] == [len(c) for c in state.columns]
+
+
+def test_ink_across_the_lattice_is_not_taken_for_a_card_boundary():
+    """Ink on the face of the bottom card, ending exactly where the lattice
+    expects the next card to start, is the case that used to cut that card in
+    two: the brightness coming back after a stroke moves the row *mean* as far
+    as a real seam does.  What the two do not share is width -- a seam is one
+    edge right across the card, and a stroke is not.
+
+    Painted in rather than rendered, and a bold stroke rather than the corner
+    glyph that actually did it: the point is that no amount of ink counts if
+    it leaves half the column alone.
+    """
+    state = auto_resolve(raw_deal(3))[0]
+    image = render(state)
+
+    for index, column in enumerate(state.columns):
+        left = slot_x(index) + int(CARD_W * 0.32)
+        right = slot_x(index) + int(CARD_W * 0.58)
+        row = TABLEAU_Y + len(column) * OFFSET  # where a ninth card would start
+        cv2.line(image, (left, row), (right, row), (35, 35, 35), int(CARD_W * 0.05))
+
+    layout = detect_layout(image, CONFIG)
+    assert [len(c) for c in layout.columns] == [len(c) for c in state.columns]
 
 
 def test_the_stacking_offset_is_measured_not_guessed():
@@ -394,6 +418,31 @@ def test_a_mildly_degraded_screenshot_still_needs_no_questions(name, image_path,
     assert result.state == parse_board(expected_path.read_text(encoding="utf-8")), name
     assert result.resolution is not None
     assert result.uncertain == [], [r.where for r in result.uncertain]
+
+
+@pytest.mark.skipif(not BANK_PATH.is_dir(), reason="no template bank installed")
+@pytest.mark.parametrize("quality", range(30, 100, 5))
+def test_the_bottom_card_of_a_column_stays_one_card(quality):
+    """A photo whose columns are cut wrong is not a shaky read the deck can
+    settle: an extra card is an extra card, and the board comes back as one
+    that could not exist -- which is how this arrived, as ``missing B4x1;
+    duplicated B2x1, B5x1`` on a board whose seventh column really ends in a
+    single B4.
+
+    Column 7 of this fixture is the hard case in one picture: eight cards
+    deep, so it runs off the bottom of the screen, and the corner glyph of the
+    bottom card ends within a third of a stacking offset of where a ninth card
+    would start.  Whether that ink cleared the old threshold came down to
+    which way the JPEG rounded, so it is pinned across the range of quality
+    settings rather than at the one the fixture happens to carry."""
+    bank = TemplateBank.load(BANK_PATH)
+    photo = cv2.imread(str(FIXTURES / "telegram" / "shot2.jpg"))
+    ok, buffer = cv2.imencode(".jpg", photo, [cv2.IMWRITE_JPEG_QUALITY, quality])
+    assert ok
+
+    result = recognize(cv2.imdecode(buffer, cv2.IMREAD_COLOR), bank)
+    expected = parse_board((FIXTURES / "telegram" / "shot2.txt").read_text())
+    assert result.state == expected
 
 
 @pytest.mark.skipif(not BANK_PATH.is_dir(), reason="no template bank installed")

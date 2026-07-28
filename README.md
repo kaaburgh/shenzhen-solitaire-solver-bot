@@ -27,19 +27,20 @@ Answers in Russian or English (`/lang`).
 ## Status
 
 Working end to end, screenshots included. The card templates committed at
-`templates/default` were cut from the iOS app, and on ten real screenshots —
-iPhone and iPad, four board scales, covering a fresh deal, an early mid-game,
-collapsed dragons, a played flower, full free cells, a dead position, an
-endgame, a JPEG compressed enough to wash out its ink colours, and one that
-came back out of Telegram as a photo — all 363 cards are read correctly. Three
-of them, all on the Telegram one, are read without confidence and settled by
-the deck; the other 360 the matcher calls outright.
+`templates/default` were cut from the iOS app, and on eleven real screenshots
+— iPhone and iPad, four board scales, covering a fresh deal, an early
+mid-game, collapsed dragons, a played flower, full free cells, a dead
+position, an endgame, a column deep enough to run off the bottom of the
+screen, a JPEG compressed enough to wash out its ink colours, and two that
+came back out of Telegram as photos — all 403 cards are read correctly. Five
+of them, all on the two Telegram ones, are read without confidence and settled
+by the deck; the other 398 the matcher calls outright.
 
 The iPad was read by the geometry pass with no changes at all, which is what
 the resolution-independence was for: 4:3 instead of 21:9, a different window,
 cards half again as wide.
 
-The bank is built from three of those boards, so the other seven are held-out:
+The bank is built from three of those boards, so the other eight are held-out:
 they say the templates generalise rather than just fitting what they were cut
 from. Feeding the rest in raises the worst confidence but leaves the worst
 margin about where it is, which is not worth giving up the held-out evidence
@@ -54,6 +55,22 @@ card whose detected box landed a pixel high caught a sliver of green felt at
 the crop's edge, which at the new threshold was exactly as "coloured" as
 genuine washed-out ink. Both are fixed in `ink_colour`
 (`src/shenzhen/vision/classify.py`) and pinned by dedicated tests.
+
+The second Telegram one cost a column. Its seventh column is eight cards deep,
+and the bottom card of a column is the one card showing its whole face — so
+the rank glyph in its corner is followed by blank card rather than by the next
+card, and the brightness coming back after that ink lands within a third of a
+stacking offset of where a ninth card would have begun. Averaged across the
+column that ink moved the row mean by 9 grey levels where a real seam moves it
+by 20, against a threshold sitting at 8, so which way it went came down to
+which way the JPEG rounded. It went the wrong way: one B4 was cut into a B2
+and a B5, and the deck was handed a board that cannot exist.
+
+What tells a seam from a glyph is not how dark it is but how much of the card
+it crosses: a seam is one edge right across the width, and no glyph is. So the
+splitter now reads the step as the median across the column's width instead of
+the mean, and anything narrower than half the column cannot move it. See
+`_brightness_steps` (`src/shenzhen/vision/layout.py`).
 
 ## Running it
 
@@ -176,11 +193,14 @@ Splitting a column into cards is the part worth explaining. Overlapping cards
 do not come apart when the image is thresholded — a column is one tall blob,
 and the seam between two cards is not dark enough to find. What is findable is
 that each card is drawn with a top-to-bottom gradient, so every boundary is a
-step up in row brightness. Those steps fall on a regular lattice, and fitting
-it separates real boundaries from the strokes of the big glyph on the bottom
-card. The stacking offset comes out of the same fit, and falls back to the
-fraction of the card width the game is known to use when a board has nothing
-stacked on it to measure.
+step up in brightness — and one that runs right across the width of the card,
+which the edges of the glyphs printed on it do not. That is what separates
+them: the step is read as the median across the column's width, and nothing
+narrower than half the column can move a median, however dark it is. The steps
+that survive fall on a regular lattice, and fitting it is what says where the
+column stops. The stacking offset comes out of the same fit, and
+falls back to the fraction of the card width the game is known to use when a
+board has nothing stacked on it to measure.
 
 The **classification** pass reads each card's top-left glyph — the part that
 stays visible under another card. Ink colour settles the suit on its own

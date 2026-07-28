@@ -1,0 +1,10 @@
+free: G7 DR .
+foundations: 1 0 1
+1: B7 R2 R4
+2: G8 G5 DB R9
+3: R8 DG DB
+4: DR B8 G9 DR DG
+5: B5 DG R6 R1 DB
+6: G3 DG B6 F DR
+7: R3 B2 B3 R7 G6 R5 B4
+8: G2 B9 G4 DB

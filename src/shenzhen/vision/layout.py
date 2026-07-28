@@ -19,8 +19,10 @@ components -- a column comes out as one tall blob -- and the seam between two
 of them is not dark enough to find by thresholding.  What does show up is
 brightness: each card is drawn with a top-to-bottom gradient, so where one
 card ends and the next begins there is a sharp *step up* in row brightness.
-Those steps land on a regular lattice, and fitting the lattice separates the
-real card boundaries from the strokes of the large glyph on the bottom card.
+A seam steps up right across the width of the card, which is what tells it
+from the edges of the glyphs printed on the card; the steps that remain land
+on a regular lattice, and fitting the lattice is what says where the column
+stops.
 
 Everything is expressed in fractions of the measured card width, so the same
 code works at any resolution.
@@ -94,8 +96,14 @@ class LayoutConfig:
     # -- splitting a column into cards -------------------------------------
     #: ignore this much of a column's width at each side when profiling
     profile_inset: float = 0.08
-    #: a brightness step counts when it beats this fraction of the strongest
-    jump_ratio: float = 0.40
+    #: how far the width of a column has to step up in brightness, in grey
+    #: levels, before the row counts as a card boundary.  The one number here
+    #: that is not a length, and so the one that does not scale: the game
+    #: draws the seam the same way whatever size it draws the board at, and it
+    #: measures 13-26 levels across the real screenshots against 2 or so for a
+    #: glyph.  Anywhere in 4.5-7.5 reads every fixture right, at every squeeze
+    #: they survive at all.
+    min_step: float = 6.0
     #: how far a step may sit from where the lattice expects it
     jump_tolerance: float = 0.30
     #: the stacking offset the game uses, as a fraction of the card width.
@@ -231,29 +239,36 @@ def _slot_of(x: float, origin: float, pitch: float) -> int:
 
 
 def _brightness_steps(gray: np.ndarray, blob: Box, config: LayoutConfig) -> list[int]:
-    """Rows inside a column blob where brightness steps up.
+    """Rows inside a column blob where the whole width steps up in brightness.
 
-    Includes the strokes of the large glyph on the bottom card; the lattice
-    fit in :func:`_split_column` is what throws those away.
+    A card boundary is one horizontal edge right across the card, so every
+    pixel column of the blob steps up at the same row.  The glyphs printed on
+    the card do not: however dark the ink is, it covers only part of the
+    width.  Taking the *median* of the step across the width is what separates
+    the two -- anything narrower than half the column cannot move a median,
+    where a mean it moves as far as a seam does, which is what used to cut a
+    card in two at the rank glyph in its corner.
     """
     inset = max(1, int(blob.w * config.profile_inset))
     region = gray[blob.y : blob.bottom, blob.x + inset : blob.x + blob.w - inset]
-    if region.shape[0] < 4 or region.shape[1] < 1:
+    if region.shape[0] < 5 or region.shape[1] < 1:
         return []
 
-    profile = region.astype(np.float32).mean(axis=1)
-    delta = np.diff(profile)
-    rising = delta[delta > 0]
-    if rising.size == 0:
-        return []
-    threshold = config.jump_ratio * float(np.percentile(rising, 99))
+    # Two rows either side rather than one: the seam is a sharp edge in the
+    # picture the game drew, but scaling a screenshot down to a photo and back
+    # up again spreads it over a couple of rows.
+    region = region.astype(np.float32)
+    above = (region[:-3] + region[1:-2]) / 2
+    below = (region[2:-1] + region[3:]) / 2
+    step = np.median(below - above, axis=1)
 
     rows: list[int] = []
-    for row in range(1, len(delta)):
-        if delta[row] <= threshold:
+    for index, value in enumerate(step):
+        if value <= config.min_step:
             continue
+        row = index + 1
         if rows and row - rows[-1] <= 3:
-            if delta[row] > delta[rows[-1]]:
+            if value > step[rows[-1] - 1]:
                 rows[-1] = row
         else:
             rows.append(row)
