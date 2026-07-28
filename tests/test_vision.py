@@ -299,12 +299,69 @@ def test_a_rescaled_screenshot_is_diagnosed_as_rescaled_not_as_a_bad_board():
 def test_a_board_that_reads_but_came_in_small_is_flagged_for_checking():
     """Between "reads perfectly" and "cannot possibly be right" there is a
     band where most boards still come out correct. Those are not refused --
-    but the read carries a warning, which is what stops the bot treating it as
-    something it is sure of."""
+    but the width comes back with the read, which is what stops the bot
+    treating it as something it is sure of.
+
+    A number rather than a sentence, deliberately: the caller says it in the
+    user's own language, and the reader has no business writing English into
+    the middle of a Russian reply."""
     bank = TemplateBank.load(BANK_PATH)
     original = cv2.imread(str(FIXTURES / "ipad" / "shot1.png"))
 
     result = recognize(_as_telegram_photo(original), bank)
     assert result.state == parse_board((FIXTURES / "ipad" / "shot1.txt").read_text())
     assert not result.confident
-    assert any("px wide" in w for w in result.warnings), result.warnings
+    assert result.narrow is not None
+    assert result.narrow < MIN_RELIABLE_CARD_WIDTH
+
+
+@pytest.mark.skipif(not BANK_PATH.is_dir(), reason="no template bank installed")
+@pytest.mark.parametrize(
+    "name,image_path,expected_path", FIXTURE_CASES, ids=lambda v: v if isinstance(v, str) else ""
+)
+def test_a_mildly_degraded_screenshot_still_needs_no_questions(name, image_path, expected_path):
+    """Squeezed enough that individual cards start coming out shaky, every one
+    of these still reads back exactly right and with nothing to ask about:
+    each card exists once in the deck, so a card the matcher is unsure of is
+    pinned by the thirty-nine around it.
+
+    This is the whole point of the resolver, so it is checked on every fixture
+    rather than on a representative one."""
+    bank = TemplateBank.load(BANK_PATH)
+    original = cv2.imread(str(image_path))
+    degraded = _as_telegram_photo(original, width=1600)
+
+    result = recognize(degraded, bank)
+    assert result.state == parse_board(expected_path.read_text(encoding="utf-8")), name
+    assert result.resolution is not None
+    assert result.uncertain == [], [r.where for r in result.uncertain]
+
+
+@pytest.mark.skipif(not BANK_PATH.is_dir(), reason="no template bank installed")
+def test_the_deck_does_the_work_that_would_otherwise_be_questions():
+    """The same run, counted: across the fixtures at this scale the matcher
+    flags cards it cannot call, and the deck settles every one of them."""
+    bank = TemplateBank.load(BANK_PATH)
+    flagged = settled = 0
+    for _name, image_path, _expected in FIXTURE_CASES:
+        degraded = _as_telegram_photo(cv2.imread(str(image_path)), width=1600)
+        result = recognize(degraded, bank)
+        flagged += sum(1 for r in result.reads if not r.confident and r.resolvable)
+        settled += result.deduced
+
+    assert flagged > 0, "nothing was shaky, so this proves nothing"
+    assert settled == flagged, (settled, flagged)
+
+
+@pytest.mark.skipif(not BANK_PATH.is_dir(), reason="no template bank installed")
+def test_a_picture_too_small_to_verify_is_refused_rather_than_guessed_at():
+    """Below the reliable width the deck is what earns a picture its trust. On
+    this one it cannot: too many cards are unreadable for the elimination to
+    close, so the answer is to resend it as a file rather than to offer the
+    likeliest of hundreds of boards."""
+    bank = TemplateBank.load(BANK_PATH)
+    original = cv2.imread(str(FIXTURES / "iphone" / "shot1.png"))
+
+    with pytest.raises(RecognitionError) as excinfo:
+        recognize(_as_telegram_photo(original, width=1280), bank)
+    assert excinfo.value.likely_rescaled

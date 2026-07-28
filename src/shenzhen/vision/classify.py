@@ -55,6 +55,12 @@ class Guess:
     confidence: float
     margin: float
     colour: int | None
+    #: every card in the bank scored against this crop, best first.  Kept so
+    #: that a read the bot is unsure about can offer runners-up rather than
+    #: only its winner -- see :mod:`shenzhen.vision.resolve`.  It spans the
+    #: whole bank rather than the ink colour's shortlist because a misread
+    #: glyph sometimes takes its colour down with it.
+    ranking: tuple[tuple[int, float], ...] = ()
 
     @property
     def is_confident(self) -> bool:
@@ -186,26 +192,44 @@ def candidates_for_colour(colour: int | None) -> tuple[int, ...]:
 
 
 def match(patch: np.ndarray, bank: TemplateBank, colour: int | None = None) -> Guess | None:
-    """Best template for ``patch``, restricted to one ink colour if known."""
+    """Best template for ``patch``, restricted to one ink colour if known.
+
+    Every template is scored, but the winner and its margin are decided within
+    the ink colour's shortlist as they always were.  The full ranking rides
+    along on the :class:`Guess` for the benefit of the resolver, which needs
+    somewhere to look when the winner turns out not to fit the deck.
+    """
     if not bank.templates:
         raise ValueError("the template bank is empty; run the calibrate command first")
 
     target = standardise(patch)
-    shortlist = [c for c in candidates_for_colour(colour) if c in bank.templates]
-    if not shortlist:
-        # The colour reading disagrees with the bank; fall back to everything.
-        shortlist = list(bank.templates)
-    if not shortlist:
-        return None
-
     pixels = float(target.size)
     scores = sorted(
-        ((float((target * bank.templates[c]).sum() / pixels), c) for c in shortlist),
+        (
+            (float((target * template).sum() / pixels), card)
+            for card, template in bank.templates.items()
+        ),
         reverse=True,
     )
-    best_score, best_card = scores[0]
-    runner_up = scores[1][0] if len(scores) > 1 else -1.0
-    return Guess(card=best_card, confidence=best_score, margin=best_score - runner_up, colour=colour)
+    if not scores:
+        return None
+    ranking = tuple((card, score) for score, card in scores)
+
+    allowed = set(candidates_for_colour(colour))
+    shortlist = [(score, card) for score, card in scores if card in allowed]
+    if not shortlist:
+        # The colour reading disagrees with the bank; fall back to everything.
+        shortlist = scores
+
+    best_score, best_card = shortlist[0]
+    runner_up = shortlist[1][0] if len(shortlist) > 1 else -1.0
+    return Guess(
+        card=best_card,
+        confidence=best_score,
+        margin=best_score - runner_up,
+        colour=colour,
+        ranking=ranking,
+    )
 
 
 def classify(patch: np.ndarray, bank: TemplateBank) -> Guess | None:

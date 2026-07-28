@@ -55,6 +55,34 @@ STRINGS: dict[str, dict[str, str]] = {
         "btn_correct": "✅ Верно, решай",
         "btn_fix": "✏️ Исправить",
         "btn_more": "Ещё 5 ходов",
+        "ask_intro": (
+            "❓ Несколько карт прочитались нечётко. Большую часть я досчитал "
+            "по колоде — в ней каждая карта ровно одна, так что почти всё "
+            "определяется однозначно. Осталось уточнить остальное:"
+        ),
+        "ask_slot": "<b>{slot}</b> — что там?",
+        "ask_left": "После этого останется вопросов: {n}",
+        "ask_deduced": (
+            "Ещё {n} карт(ы) прочитались нечётко, но по колоде подходил ровно "
+            "один вариант — подставил их сам."
+        ),
+        "ask_other": "Всё, что подходит сюда по колоде:",
+        "ask_no_options": (
+            "По колоде сюда не подходит ничего — видимо, ошибка в другой "
+            "карте. Проще прислать расклад текстом, формат — /help"
+        ),
+        "ask_contradiction": (
+            "С этим ответом расклад не сходится по колоде — значит, "
+            "ошибка где-то ещё. Выбери другой вариант или введи расклад текстом."
+        ),
+        "ask_expired": "Этот вопрос уже неактуален — пришли скриншот заново.",
+        "board_narrow": (
+            "Картинка мелковата — карты {card_w} px в ширину. Расклад сошёлся "
+            "по колоде, так что он почти наверняка верный, но глазом проверь. "
+            "Скриншот <b>файлом</b> читается без этой оговорки."
+        ),
+        "btn_other": "Другое…",
+        "btn_type": "✏️ Введу текстом",
         "fix_hint": (
             "Пришли расклад текстом — я возьму его вместо распознанного.\n"
             "Вот распознанное, поправь и отправь обратно:"
@@ -157,6 +185,34 @@ STRINGS: dict[str, dict[str, str]] = {
         "btn_correct": "✅ Right, solve it",
         "btn_fix": "✏️ Fix it",
         "btn_more": "Next 5 moves",
+        "ask_intro": (
+            "❓ A few cards did not come out clearly. Most of them the deck "
+            "settled for me — every card in it exists exactly once, so nearly "
+            "everything follows by elimination. What is left to ask:"
+        ),
+        "ask_slot": "<b>{slot}</b> — what is it?",
+        "ask_left": "Questions left after this one: {n}",
+        "ask_deduced": (
+            "Another {n} card(s) read unclearly, but only one reading fitted "
+            "the deck, so I filled those in myself."
+        ),
+        "ask_other": "Everything the deck still allows here:",
+        "ask_no_options": (
+            "Nothing fits here at all, so the mistake is in some other card. "
+            "Typing the position out will be quicker — format in /help"
+        ),
+        "ask_contradiction": (
+            "That answer leaves the deck not adding up, so something else is "
+            "misread. Pick another one, or type the position out."
+        ),
+        "ask_expired": "That question is out of date — send the screenshot again.",
+        "board_narrow": (
+            "The picture came in small — cards {card_w}px wide. The position "
+            "does add up against the deck, so it is very probably right, but "
+            "give it a look. Sent <b>as a file</b> there is no such caveat."
+        ),
+        "btn_other": "Other…",
+        "btn_type": "✏️ I will type it",
         "fix_hint": (
             "Type the position out and I will use that instead.\n"
             "Here is what I read — edit it and send it back:"
