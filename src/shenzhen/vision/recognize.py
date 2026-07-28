@@ -279,7 +279,16 @@ def recognize(
         for depth, box in enumerate(group):
             entry = read(box, f"{index + 1}.{depth + 1}")
             if entry is None:
-                warnings.append(f"column {index + 1}, card {depth + 1}: could not read the glyph")
+                # The layout pass deliberately errs on the side of proposing a
+                # card boundary: on a small image a stroke in the large glyph of
+                # an exposed dragon can look like the edge of another card.  A
+                # glyph-less proposal is therefore not a card read, and keeping
+                # its provisional depth as a warning can contradict the legal
+                # board below ("its only card", then "card 2 unreadable").  If
+                # this really was a card, the deck check in ``resolve`` will
+                # reject the incomplete skeleton; if that check succeeds, the
+                # proposal was necessarily layout noise and there is nothing for
+                # the user to verify.
                 continue
             found.append(entry)
         columns.append(tuple(found))
