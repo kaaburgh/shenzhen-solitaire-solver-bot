@@ -16,11 +16,22 @@ make the report untrustworthy for the one job it has.
 The re-exec also means the solver's worker processes are measured.  Their data
 lands in separate files (``parallel = true``) that ``coverage combine`` merges
 later, so a restart adds to the picture rather than replacing it.
+
+What may *not* be merged is data recorded against different source.  Coverage
+identifies a line by path and number, so a deploy that moves code around while
+measuring is on leaves the earlier files describing lines that now belong to
+something else -- and it fails quietly, as a report that swaps which functions
+look dead.  Data therefore lands in a subdirectory named for a fingerprint of
+the source it was recorded against, plus the mode it was recorded in, since
+statement and branch data cannot be combined either.  Same code, same mode:
+the picture accumulates.  Anything else: a new dataset, and the old one is
+still there to report on separately.
 """
 
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import os
 import sys
@@ -34,6 +45,9 @@ DATA_DIR_ENV = "SHENZHEN_COVERAGE"
 BRANCH_ENV = "SHENZHEN_COVERAGE_BRANCH"
 
 CONFIG_NAME = ".coveragerc"
+#: symlink kept pointing at the dataset the running bot is writing to, so that
+#: the commands in docs/coverage.md do not have to name a fingerprint.
+CURRENT_LINK = "current"
 
 #: how often the long-running process writes what it has collected so far.
 #: Without this a container that is OOM-killed on day six takes the whole
@@ -93,6 +107,49 @@ def already_measuring() -> bool:
     return _truthy(os.environ.get("COVERAGE_RUN"))
 
 
+def source_fingerprint() -> str:
+    """Eight hex digits standing for the code about to be measured.
+
+    Every ``.py`` under the package, by name and by content, because that is
+    the granularity coverage records at: any edit at all can shift the line
+    numbers that the data files are written in terms of.
+    """
+    package = Path(__file__).resolve().parent.parent
+    digest = hashlib.sha256()
+    try:
+        for path in sorted(package.rglob("*.py")):
+            digest.update(path.relative_to(package).as_posix().encode())
+            digest.update(path.read_bytes())
+    except OSError as err:
+        # Unreadable source is somebody else's problem -- but two different
+        # revisions must not both end up here, so refuse to name a dataset
+        # after a fingerprint that means nothing.
+        log.warning("cannot fingerprint the source (%s); keeping data apart by time", err)
+        return "unknown"
+    return digest.hexdigest()[:8]
+
+
+def dataset_dir(root: Path, *, branch: bool) -> Path:
+    """The subdirectory this run's data belongs in.
+
+    Two runs share one only when their source and their mode agree, which is
+    exactly when coverage can merge them into a report that means anything.
+    """
+    return root / f"{source_fingerprint()}-{'branch' if branch else 'lines'}"
+
+
+def link_current(root: Path, dataset: Path) -> None:
+    """Point ``current`` at the dataset being written, best effort."""
+    link = root / CURRENT_LINK
+    temporary = root / f".{CURRENT_LINK}.new"
+    try:
+        temporary.unlink(missing_ok=True)
+        temporary.symlink_to(dataset.name, target_is_directory=True)
+        os.replace(temporary, link)
+    except OSError as err:
+        log.warning("could not point %s at %s (%s)", link, dataset.name, err)
+
+
 def write_config(directory: Path, *, branch: bool) -> Path:
     """Write the rcfile that both this process and its children will use.
 
@@ -132,12 +189,12 @@ def reexec_if_requested() -> None:
         return
 
     branch = branch_requested()
+    dataset = dataset_dir(directory, branch=branch)
     try:
-        config = write_config(directory, branch=branch)
+        config = write_config(dataset, branch=branch)
+        link_current(directory, dataset)
     except OSError as err:
-        log.warning(
-            "cannot write coverage data to %s (%s) -- running unmeasured", directory, err
-        )
+        log.warning("cannot write coverage data to %s (%s) -- running unmeasured", dataset, err)
         return
 
     # Picked up by the solver's worker processes, which coverage starts
@@ -150,7 +207,7 @@ def reexec_if_requested() -> None:
         # we are measuring.  It cannot do branches, hence only on this path.
         os.environ.setdefault("COVERAGE_CORE", "sysmon")
 
-    log.info("restarting under coverage; data in %s", directory)
+    log.info("restarting under coverage; data in %s (%s/%s)", dataset, directory, CURRENT_LINK)
     os.execv(
         sys.executable,
         [

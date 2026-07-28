@@ -25,6 +25,11 @@ def clean_env(monkeypatch):
     monkeypatch.delenv("COVERAGE_CORE", raising=False)
 
 
+def datasets(root):
+    """The dataset directories under a data root, ignoring the `current` link."""
+    return sorted(p.name for p in root.iterdir() if p.is_dir() and not p.is_symlink())
+
+
 @pytest.fixture
 def execs(monkeypatch):
     """Catch the re-exec instead of replacing the test runner with a bot."""
@@ -48,15 +53,20 @@ def test_an_empty_setting_counts_as_off(execs, monkeypatch):
 
 
 def test_it_re_executes_itself_under_coverage(execs, monkeypatch, tmp_path):
-    monkeypatch.setenv("SHENZHEN_COVERAGE", str(tmp_path / "data"))
+    root = tmp_path / "data"
+    monkeypatch.setenv("SHENZHEN_COVERAGE", str(root))
     runtime_coverage.reexec_if_requested()
 
     (argv,) = execs
-    config = tmp_path / "data" / runtime_coverage.CONFIG_NAME
+    config = runtime_coverage.dataset_dir(root, branch=False) / runtime_coverage.CONFIG_NAME
+    assert config.exists()
     assert argv[1:] == ["-m", "coverage", "run", f"--rcfile={config}", "-m", "shenzhen.bot.main"]
     assert argv[0] == sys.executable
     # The solver's workers inherit no Python state, only the environment.
     assert runtime_coverage.os.environ["COVERAGE_PROCESS_START"] == str(config)
+    # And the documented commands can name the dataset without knowing which
+    # revision of the source is deployed.
+    assert (root / runtime_coverage.CURRENT_LINK).resolve() == config.parent.resolve()
 
 
 def test_the_measured_process_does_not_re_execute_again(execs, monkeypatch, tmp_path):
@@ -89,7 +99,7 @@ def test_a_missing_coverage_install_leaves_the_bot_running(execs, monkeypatch, t
     runtime_coverage.reexec_if_requested()
 
     assert execs == []
-    assert not (tmp_path / runtime_coverage.CONFIG_NAME).exists()
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_the_generated_config_is_one_coverage_accepts(tmp_path):
@@ -110,7 +120,8 @@ def test_branch_coverage_is_opt_in(execs, monkeypatch, tmp_path):
 
     runtime_coverage.reexec_if_requested()
 
-    cov = coverage.Coverage(config_file=str(tmp_path / runtime_coverage.CONFIG_NAME))
+    dataset = runtime_coverage.dataset_dir(tmp_path, branch=True)
+    cov = coverage.Coverage(config_file=str(dataset / runtime_coverage.CONFIG_NAME))
     assert cov.config.branch is True
     # The cheap core cannot do branches; asking for it here would only earn a
     # warning and the slow one anyway.
@@ -129,6 +140,63 @@ def test_a_core_chosen_by_hand_is_left_alone(execs, monkeypatch, tmp_path):
     monkeypatch.setenv("COVERAGE_CORE", "ctrace")
     runtime_coverage.reexec_if_requested()
     assert runtime_coverage.os.environ["COVERAGE_CORE"] == "ctrace"
+
+
+def test_a_deploy_that_changes_the_source_starts_a_new_dataset(execs, monkeypatch, tmp_path):
+    # Coverage records a line as a path and a number, so data taken against
+    # source that has since moved does not merely go stale -- it reads as
+    # different lines, and the report can end up recommending that live code
+    # be deleted and dead code kept.  Different source, different dataset.
+    monkeypatch.setenv("SHENZHEN_COVERAGE", str(tmp_path))
+
+    monkeypatch.setattr(runtime_coverage, "source_fingerprint", lambda: "aaaaaaaa")
+    runtime_coverage.reexec_if_requested()
+    monkeypatch.setattr(runtime_coverage, "source_fingerprint", lambda: "bbbbbbbb")
+    runtime_coverage.reexec_if_requested()
+
+    assert datasets(tmp_path) == ["aaaaaaaa-lines", "bbbbbbbb-lines"]
+    # ...and the report commands follow the deployed one.
+    assert (tmp_path / runtime_coverage.CURRENT_LINK).readlink().name == "bbbbbbbb-lines"
+
+
+def test_switching_to_branch_coverage_starts_a_new_dataset(execs, monkeypatch, tmp_path):
+    # `coverage combine` refuses outright to merge branch data with statement
+    # data, so the two cannot share a directory the way restarts do.
+    monkeypatch.setenv("SHENZHEN_COVERAGE", str(tmp_path))
+    monkeypatch.setattr(runtime_coverage, "source_fingerprint", lambda: "aaaaaaaa")
+
+    runtime_coverage.reexec_if_requested()
+    monkeypatch.setenv("SHENZHEN_COVERAGE_BRANCH", "1")
+    runtime_coverage.reexec_if_requested()
+
+    assert datasets(tmp_path) == ["aaaaaaaa-branch", "aaaaaaaa-lines"]
+
+
+def test_a_restart_on_the_same_code_keeps_adding_to_one_dataset(execs, monkeypatch, tmp_path):
+    monkeypatch.setenv("SHENZHEN_COVERAGE", str(tmp_path))
+
+    runtime_coverage.reexec_if_requested()
+    runtime_coverage.reexec_if_requested()
+
+    assert len(datasets(tmp_path)) == 1
+
+
+def test_the_fingerprint_covers_the_whole_package(tmp_path, monkeypatch):
+    before = runtime_coverage.source_fingerprint()
+    assert before == runtime_coverage.source_fingerprint(), "same source, same fingerprint"
+    assert len(before) == 8
+
+    # A module the bot barely touches still counts: the line numbers coverage
+    # recorded are only meaningful against the exact source they came from.
+    scratch = tmp_path / "shenzhen" / "bot"
+    scratch.mkdir(parents=True)
+    (scratch / "runtime_coverage.py").write_text("x = 1\n")
+    (scratch.parent / "notation.py").write_text("y = 2\n")
+    monkeypatch.setattr(runtime_coverage, "__file__", str(scratch / "runtime_coverage.py"))
+    with_notation = runtime_coverage.source_fingerprint()
+    (scratch.parent / "notation.py").write_text("y = 3\n")
+
+    assert runtime_coverage.source_fingerprint() != with_notation
 
 
 def test_there_is_no_periodic_save_when_not_measuring():

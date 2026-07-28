@@ -23,7 +23,8 @@ and restart:
 ```console
 $ docker compose up -d
 $ docker compose logs bot | grep coverage
-... INFO shenzhen.bot.coverage: restarting under coverage; data in /data/coverage
+... INFO shenzhen.bot.coverage: restarting under coverage; data in
+    /data/coverage/4f2ab1c9-lines (/data/coverage/current)
 ```
 
 That log line is the confirmation. Without it, nothing is being measured --
@@ -31,8 +32,33 @@ the bot never refuses to start over coverage, so a bad path or a missing
 `coverage` install shows up as a warning and an ordinary unmeasured run.
 
 The data lives in a named Docker volume, so it survives restarts and
-`docker compose pull`. Two weeks of measurement across five deploys all end up
-in the same picture.
+`docker compose pull`.
+
+## Datasets, and why a deploy starts a new one
+
+`4f2ab1c9` in that path is a fingerprint of the source being measured, and
+`current` is a symlink to the dataset the running bot is writing. Restart the
+bot as often as you like on the same image and everything accumulates in the
+one dataset. Deploy code, and the bot starts a fresh one.
+
+That is not tidiness, it is correctness. Coverage records an executed line as
+a path and a line number, with no note of which revision it came from, so data
+taken before a deploy describes *the current file's* lines by number after it.
+Combine the two and the report does not go vague, it goes wrong: move two
+functions past each other, and the one the bot actually runs is reported as
+never executed while the dead one reads as covered. A report used to decide
+what to delete is the last place that can be allowed to happen.
+
+The same applies to branch data, which `coverage combine` refuses to merge
+with statement data at all -- so `SHENZHEN_COVERAGE_BRANCH` gets its own
+dataset too (`4f2ab1c9-branch`), and switching modes needs nothing cleaned up
+first.
+
+The practical consequence is worth planning around: **a deploy resets the
+measuring period.** For a week-long reading, deploy before you start rather
+than during. Old datasets stay where they are and can still be reported on
+individually -- each is internally consistent, it is only the merging of two
+that is not.
 
 ## What it costs
 
@@ -65,11 +91,16 @@ Each process writes its own data file -- the bot, and one per solver worker --
 so they have to be merged first:
 
 ```console
-$ docker compose exec bot python -m coverage combine --keep --rcfile=/data/coverage/.coveragerc
-$ docker compose exec bot python -m coverage report --rcfile=/data/coverage/.coveragerc
-$ docker compose exec bot python -m coverage html --rcfile=/data/coverage/.coveragerc -d /data/coverage/html
-$ docker compose cp bot:/data/coverage/html ./coverage-html
+$ rc=/data/coverage/current/.coveragerc
+$ docker compose exec bot python -m coverage combine --keep --rcfile=$rc
+$ docker compose exec bot python -m coverage report --rcfile=$rc
+$ docker compose exec bot python -m coverage html --rcfile=$rc -d /data/coverage/current/html
+$ docker compose cp bot:/data/coverage/current/html ./coverage-html
 ```
+
+`current` is the dataset for the code that is deployed right now. To report on
+an earlier one, name it instead of `current` -- but read it against the source
+it was recorded against, not against today's, for the reason above.
 
 `--keep` matters. Without it `combine` deletes the per-process files it read,
 and since the bot keeps writing new ones, the *next* combine would report on
@@ -109,7 +140,7 @@ beginning of the argument for deleting it, not the end:
   to type a position by hand says nothing about whether the text parser is
   worth keeping.
 
-Where it earns its keep is the third kind of finding: a fallback under a
+Where it earns its keep is none of those three: a fallback under a
 fallback, a fourth escalation level in the screenshot reader that the first
 three always beat it to, a branch that only exists because an earlier version
 of the code could produce input that this version cannot. Those show up as
@@ -122,10 +153,11 @@ above, and code that neither reaches is the safest to remove.
 
 ## Turning it off
 
-Comment the line back out and `docker compose up -d`. To throw the data away:
+Comment the line back out and `docker compose up -d`. To throw away everything
+that has been collected, including the older datasets:
 
 ```console
-$ docker compose exec bot sh -c 'rm -rf /data/coverage/.coverage* /data/coverage/html'
+$ docker compose exec bot find /data/coverage -mindepth 1 -delete
 ```
 
 ## Running it outside Docker
@@ -138,4 +170,6 @@ started that way:
 $ SHENZHEN_COVERAGE=./coverage-data python -m shenzhen.bot.main
 ```
 
-Needs `coverage` installed (it is in the `dev` extra and in the image).
+Datasets work the same way -- `./coverage-data/current/.coveragerc` is the
+rcfile to hand `coverage combine` and `coverage html`. Needs `coverage`
+installed (it is in the `dev` extra and in the image).
