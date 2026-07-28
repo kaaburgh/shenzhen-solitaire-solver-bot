@@ -14,12 +14,12 @@ from telegram.constants import ChatAction, ParseMode
 from telegram.error import TelegramError
 from telegram.ext import ContextTypes
 
-from ..cards import card_code
 from ..game import InvalidBoard, State
 from ..notation import (
     DEFAULT_LANG,
     LANGS,
     board_to_text,
+    card_mark,
     describe_slot,
     describe_steps,
     render_board,
@@ -28,6 +28,7 @@ from ..solver import SolveResult, Status, solve
 from ..textio import parse_board
 from ..vision import LayoutError, RecognitionError, TemplateBank, load_image, recognize
 from ..vision.resolve import Unresolvable, resolve, widest_options
+from ..vision.verify import Check, column_depths, spot_checks
 from .i18n import normalise_lang, t
 from .storage import Session, Sessions
 
@@ -80,6 +81,27 @@ def _session(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Session:
 
 def _pre(text: str) -> str:
     return f"<pre>{html.escape(text)}</pre>"
+
+
+def _slot(reads: Sequence, index: int, lang: str) -> str:
+    """Where read ``index`` sits, said the way someone looking at the screen
+    would find it."""
+    where = reads[index].where
+    return describe_slot(
+        where, lang, depth_total=column_depths(reads).get(where.partition(".")[0])
+    )
+
+
+def _check_lines(checks: Sequence[Check], lang: str) -> list[str]:
+    return [
+        t(
+            lang,
+            "check_line",
+            slot=describe_slot(check.where, lang, depth_total=check.depth_total),
+            card=card_mark(check.card),
+        )
+        for check in checks
+    ]
 
 
 # --- commands --------------------------------------------------------------
@@ -227,7 +249,16 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await _ask(message, session, intro=True)
         return
 
-    uncertain = [f"{r.where} = {card_code(r.card)}" for r in result.uncertain]
+    reads = result.reads
+    uncertain = [
+        t(
+            session.lang,
+            "check_line",
+            slot=_slot(reads, index, session.lang),
+            card=card_mark(reads[index].card),
+        )
+        for index in result.uncertain_indices
+    ]
     await _accept_board(
         message,
         session,
@@ -236,6 +267,7 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         warnings=result.warnings,
         deduced=result.deduced,
         narrow=result.narrow,
+        checks=spot_checks(reads, resolution),
     )
 
 
@@ -251,7 +283,7 @@ def _option_rows(token: int, index: int, cards: Sequence[int]) -> list[list[Inli
     for start in range(0, len(cards), OPTIONS_PER_ROW):
         rows.append(
             [
-                InlineKeyboardButton(card_code(card), callback_data=f"pick:{token}:{index}:{card}")
+                InlineKeyboardButton(card_mark(card), callback_data=f"pick:{token}:{index}:{card}")
                 for card in cards[start : start + OPTIONS_PER_ROW]
             ]
         )
@@ -283,7 +315,6 @@ async def _ask(message, session: Session, *, intro: bool = False, edit=None) -> 
     if index is None:  # pragma: no cover -- guarded by the caller
         return
 
-    read = pending.reads[index]
     options = resolution.options(index)
 
     lines = []
@@ -292,10 +323,11 @@ async def _ask(message, session: Session, *, intro: bool = False, edit=None) -> 
         if pending.deduced:
             lines.append(t(session.lang, "ask_deduced", n=pending.deduced))
         lines.append("")
-    lines.append(t(session.lang, "ask_slot", slot=describe_slot(read.where, session.lang)))
+    lines.append(t(session.lang, "ask_slot", slot=_slot(pending.reads, index, session.lang)))
     remaining = len(resolution.open) - 1
     if remaining:
         lines.append(t(session.lang, "ask_left", n=remaining))
+    lines.append(t(session.lang, "legend"))
 
     keyboard = InlineKeyboardMarkup(
         _option_rows(pending.token, index, options)
@@ -335,7 +367,12 @@ async def _answer_question(query, session: Session, index: int, card: int) -> No
 
     session.pending = None
     uncertain = [
-        f"{pending.reads[i].where} = {card_code(resolution.options(i)[0])}"
+        t(
+            session.lang,
+            "check_line",
+            slot=_slot(pending.reads, i, session.lang),
+            card=card_mark(resolution.options(i)[0]),
+        )
         for i in resolution.open
     ]
     await _accept_board(
@@ -344,6 +381,7 @@ async def _answer_question(query, session: Session, index: int, card: int) -> No
         resolution.state,
         uncertain=uncertain,
         warnings=pending.warnings,
+        checks=spot_checks(pending.reads, resolution, pinned),
         # `settled` is recomputed from scratch and counts the answers just
         # given as settled too -- they are, but the user gave them, so they do
         # not belong in "cards I worked out for you".
@@ -367,10 +405,10 @@ async def _offer_everything(query, session: Session, index: int) -> None:
         await query.message.reply_text(t(session.lang, "ask_no_options"))
         return
 
-    read = pending.reads[index]
     lines = [
-        t(session.lang, "ask_slot", slot=describe_slot(read.where, session.lang)),
+        t(session.lang, "ask_slot", slot=_slot(pending.reads, index, session.lang)),
         t(session.lang, "ask_other"),
+        t(session.lang, "legend"),
     ]
     keyboard = InlineKeyboardMarkup(
         _option_rows(pending.token, index, options)
@@ -390,31 +428,46 @@ async def _accept_board(
     warnings: list[str],
     deduced: int = 0,
     narrow: int | None = None,
+    checks: Sequence[Check] = (),
 ) -> None:
-    """Show the position back and ask for a nod before spending time on it."""
+    """Ask for a nod before spending time on the position.
+
+    With ``checks`` that is a spot check of three or four slots rather than
+    the whole board -- see :mod:`shenzhen.vision.verify` for why those four.
+    The board itself stays one button away, for anyone who would rather look
+    at all of it; a position that was typed out has nothing to sample, so it
+    gets the board directly.
+    """
     session.board = board
     session.result = None
     session.shown = 0
 
-    lines = [t(session.lang, "board_read"), _pre(render_board(board, session.lang))]
+    if checks:
+        lines = [t(session.lang, "check_head")]
+        lines.extend(_check_lines(checks, session.lang))
+        lines.append(t(session.lang, "legend"))
+    else:
+        lines = [t(session.lang, "board_read"), _pre(render_board(board, session.lang))]
     if deduced:
         lines.append(t(session.lang, "ask_deduced", n=deduced))
     if uncertain:
-        lines.append(t(session.lang, "uncertain", cards=", ".join(uncertain)))
+        lines.append(t(session.lang, "uncertain", cards="; ".join(uncertain)))
     if warnings:
         lines.append(t(session.lang, "warnings", items="; ".join(warnings)))
     if narrow is not None:
         lines.append(t(session.lang, "board_narrow", card_w=narrow))
-    lines.append(t(session.lang, "board_confirm"))
+    lines.append(t(session.lang, "check_confirm" if checks else "board_confirm"))
 
-    keyboard = InlineKeyboardMarkup(
-        [
-            [InlineKeyboardButton(t(session.lang, "btn_correct"), callback_data="solve")],
-            [InlineKeyboardButton(t(session.lang, "btn_fix"), callback_data="fix")],
-        ]
-    )
+    rows = [
+        [InlineKeyboardButton(t(session.lang, "btn_correct"), callback_data="solve")],
+        [InlineKeyboardButton(t(session.lang, "btn_fix"), callback_data="fix")],
+    ]
+    if checks:
+        rows[1].append(
+            InlineKeyboardButton(t(session.lang, "btn_board"), callback_data="board")
+        )
     await message.reply_text(
-        "\n".join(lines), parse_mode=ParseMode.HTML, reply_markup=keyboard
+        "\n".join(lines), parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(rows)
     )
 
 
@@ -464,6 +517,26 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             return
         await query.message.reply_text(
             t(session.lang, "fix_hint") + "\n" + _pre(board_to_text(session.board)),
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    if data == "board":
+        await query.answer()
+        # The whole position, for anyone who would rather check all of it than
+        # the four slots offered.  In colour, since that is the version worth
+        # holding up against the screen.
+        if session.board is None:
+            await query.message.reply_text(t(session.lang, "no_board"))
+            return
+        await query.message.reply_text(
+            "\n".join(
+                [
+                    t(session.lang, "board_read"),
+                    html.escape(render_board(session.board, session.lang, colour=True)),
+                    t(session.lang, "legend"),
+                ]
+            ),
             parse_mode=ParseMode.HTML,
         )
         return

@@ -24,6 +24,8 @@ STRINGS: dict[str, dict[str, str]] = {
             "<code>B1</code>…<code>B9</code> — чёрная масть (иероглифы)\n"
             "<code>DG</code> <code>DR</code> <code>DB</code> — драконы, "
             "<code>F</code> — цветок\n\n"
+            "Когда я показываю карты сам, масть — это цвет, а не буква: "
+            "🟢9 · 🔴9 · ⚫9, драконы — 🟩 🟥 ⬜, цветок — 🌸.\n\n"
             "<b>Формат текста</b>\n"
             "<code>free: DG . .\n"
             "foundations: 3 0 1\n"
@@ -50,10 +52,21 @@ STRINGS: dict[str, dict[str, str]] = {
         "solving": "Считаю…",
         "board_read": "Вот что я вижу:",
         "board_confirm": "Всё верно?",
+        "check_head": (
+            "Расклад прочитан. Сверять его целиком не надо — хватит этих карт: "
+            "если ошибка есть, она почти наверняка в одной из них."
+        ),
+        "check_line": "• {slot} — {card}",
+        "check_confirm": "Сходится?",
+        "legend": (
+            "🟢 бамбук · 🔴 монеты · ⚫ иероглифы · "
+            "🟩 🟥 ⬜ драконы · 🌸 цветок · 🔒 схлопнутые драконы"
+        ),
         "uncertain": "Не уверен в этих картах: {cards}",
         "warnings": "Замечания: {items}",
         "btn_correct": "✅ Верно, решай",
         "btn_fix": "✏️ Исправить",
+        "btn_board": "🔍 Весь расклад",
         "btn_more": "Ещё 5 ходов",
         "ask_intro": (
             "❓ Несколько карт прочитались нечётко. Большую часть я досчитал "
@@ -155,6 +168,8 @@ STRINGS: dict[str, dict[str, str]] = {
             "<code>B1</code>…<code>B9</code> — black suit (characters)\n"
             "<code>DG</code> <code>DR</code> <code>DB</code> — dragons, "
             "<code>F</code> — flower\n\n"
+            "When I show you cards, the suit is a colour rather than a letter: "
+            "🟢9 · 🔴9 · ⚫9, dragons are 🟩 🟥 ⬜ and the flower is 🌸.\n\n"
             "<b>Text format</b>\n"
             "<code>free: DG . .\n"
             "foundations: 3 0 1\n"
@@ -180,10 +195,22 @@ STRINGS: dict[str, dict[str, str]] = {
         "solving": "Thinking…",
         "board_read": "Here is what I see:",
         "board_confirm": "Is that right?",
+        "check_head": (
+            "I have read the board. No need to check all of it — these cards "
+            "are enough: if anything is wrong, it is almost certainly one of "
+            "them."
+        ),
+        "check_line": "• {slot} — {card}",
+        "check_confirm": "Do those match?",
+        "legend": (
+            "🟢 bamboo · 🔴 coins · ⚫ characters · "
+            "🟩 🟥 ⬜ dragons · 🌸 flower · 🔒 collapsed dragons"
+        ),
         "uncertain": "Not sure about these: {cards}",
         "warnings": "Notes: {items}",
         "btn_correct": "✅ Right, solve it",
         "btn_fix": "✏️ Fix it",
+        "btn_board": "🔍 The whole board",
         "btn_more": "Next 5 moves",
         "ask_intro": (
             "❓ A few cards did not come out clearly. Most of them the deck "
