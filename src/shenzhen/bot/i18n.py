@@ -116,6 +116,18 @@ STRINGS: dict[str, dict[str, str]] = {
             "Тогда он дойдёт как есть и прочитается.\n\n"
             "Либо опиши расклад текстом — /help"
         ),
+        "not_an_image": (
+            "Это не похоже на картинку. Пришли скриншот доски — фотографией "
+            "или файлом (png, jpg), — либо опиши расклад текстом: /help"
+        ),
+        "file_too_big": (
+            "Файл слишком большой: Telegram отдаёт ботам не больше {limit} МБ. "
+            "Пришли скриншот фотографией или опиши расклад текстом — /help"
+        ),
+        "download_failed": (
+            "Не получилось забрать файл из Telegram: {reason}\n\n"
+            "Попробуй прислать ещё раз или опиши расклад текстом — /help"
+        ),
         "no_templates": (
             "Распознавание скриншотов на этом сервере ещё не настроено "
             "(нет банка шаблонов карт). Пришли расклад текстом — /help"
@@ -233,6 +245,20 @@ STRINGS: dict[str, dict[str, str]] = {
             "→ File (your phone may call it Document), then pick it from the "
             "gallery. It arrives untouched and reads fine.\n\n"
             "Or type the position out — /help"
+        ),
+        "not_an_image": (
+            "That does not look like a picture. Send a screenshot of the board "
+            "— as a photo or as a file (png, jpg) — or type the position out: "
+            "/help"
+        ),
+        "file_too_big": (
+            "That file is too big: Telegram only hands bots files up to "
+            "{limit} MB. Send the screenshot as a photo instead, or type the "
+            "position out — /help"
+        ),
+        "download_failed": (
+            "I could not fetch the file from Telegram: {reason}\n\n"
+            "Try sending it again, or type the position out — /help"
         ),
         "no_templates": (
             "Screenshot reading is not set up on this server (no card template "

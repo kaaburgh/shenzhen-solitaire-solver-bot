@@ -60,11 +60,31 @@ class FakeMessage:
 class FakePhoto:
     """The smallest stand-in `handle_image` will accept for a photo."""
 
+    file_size = 200_000
+
+    def __init__(self, data: bytes = b"not really a png") -> None:
+        self.data = data
+
     async def get_file(self):
         return self
 
     async def download_as_bytearray(self):
-        return bytearray(b"not really a png")
+        return bytearray(self.data)
+
+
+class FakeDocument(FakePhoto):
+    """A screenshot sent the way /help asks for it: as a file."""
+
+    def __init__(
+        self,
+        mime_type: str | None = "application/octet-stream",
+        file_name: str | None = "IMG000.jpg",
+        file_size: int = 1_400_000,
+    ) -> None:
+        super().__init__()
+        self.mime_type = mime_type
+        self.file_name = file_name
+        self.file_size = file_size
 
 
 class FakeUser:
@@ -89,6 +109,7 @@ class FakeUpdate:
     def __init__(self, message=None, query=None, user=None, chat=None) -> None:
         self.message = message
         self.callback_query = query
+        self.effective_message = message or query.message
         self.effective_chat = chat or (message.chat if message else query.message.chat)
         self.effective_user = user or FakeUser()
 
@@ -101,6 +122,8 @@ class FakeApplication:
 class FakeContext:
     def __init__(self, application: FakeApplication) -> None:
         self.application = application
+        #: what PTB puts there before calling the error handler
+        self.error: Exception | None = None
 
 
 @pytest.fixture
@@ -131,6 +154,12 @@ async def send_text(context, body: str, log: list):
 async def press(context, data: str, log: list):
     query = FakeQuery(data, FakeMessage(FakeChat(), log=log))
     await handlers.on_callback(FakeUpdate(query=query), context)
+
+
+async def send_file(context, document, log: list):
+    message = FakeMessage(FakeChat(), log=log)
+    message.document = document
+    await handlers.handle_image(FakeUpdate(message=message), context)
 
 
 @pytest.mark.asyncio
@@ -248,6 +277,85 @@ async def test_a_rescaled_screenshot_is_explained_not_reported_as_deck_arithmeti
     assert "missing" not in body, body   # and not the deck arithmetic
 
 
+# --- screenshots sent as files ---------------------------------------------
+
+
+@pytest.fixture
+def reading(context, monkeypatch):
+    """A bot that recognises whatever bytes it is handed as SOLVABLE."""
+    from shenzhen.textio import parse_board
+    from shenzhen.vision.recognize import Recognition
+
+    context.application.bot_data["config"].bank = object()
+    monkeypatch.setattr(
+        handlers, "_recognize_bytes", lambda _data, _bank: Recognition(parse_board(SOLVABLE))
+    )
+    return context
+
+
+@pytest.mark.parametrize(
+    "mime_type",
+    [
+        "image/png",
+        # What the phone actually sent, and what used to be ignored.
+        "application/octet-stream",
+        None,
+    ],
+)
+@pytest.mark.asyncio
+async def test_a_screenshot_sent_as_a_file_is_read_like_any_other(reading, mime_type):
+    log: list = []
+    await send_file(reading, FakeDocument(mime_type=mime_type), log)
+
+    assert "1:" in texts(log)  # the rendered board, not silence
+    keyboard = log[-1][1]["reply_markup"]
+    callbacks = [button.callback_data for row in keyboard.inline_keyboard for button in row]
+    assert callbacks == ["solve", "fix"]
+
+
+@pytest.mark.asyncio
+async def test_a_file_that_is_not_a_picture_gets_told_so(reading):
+    log: list = []
+    await send_file(reading, FakeDocument(mime_type="application/pdf", file_name="rules.pdf"), log)
+    assert "не похоже на картинку" in texts(log)
+
+
+@pytest.mark.asyncio
+async def test_a_file_too_big_to_fetch_is_explained_before_the_download(reading):
+    """Telegram will not hand a bot more than 20 MB, and finding that out from
+    a failed getFile is both slower and less clear than saying so up front."""
+    log: list = []
+    await send_file(reading, FakeDocument(file_size=40 * 1024 * 1024), log)
+    body = texts(log)
+    assert "слишком большой" in body
+    assert "20" in body
+
+
+@pytest.mark.asyncio
+async def test_a_download_that_fails_is_reported_not_swallowed(reading):
+    from telegram.error import TimedOut
+
+    class Unfetchable(FakeDocument):
+        async def get_file(self):
+            raise TimedOut()
+
+    log: list = []
+    await send_file(reading, Unfetchable(), log)
+    assert "Не получилось забрать файл" in texts(log)
+
+
+@pytest.mark.asyncio
+async def test_an_unexpected_failure_still_answers_the_chat(context):
+    """Anything the handlers do not catch reaches `on_error`; before it
+    existed the traceback went to the server log and the chat went quiet."""
+    log: list = []
+    message = FakeMessage(FakeChat(), log=log)
+    update = FakeUpdate(message=message)
+    context.error = RuntimeError("boom")
+
+    await handlers.on_error(update, context)
+
+    assert "boom" in texts(log)
 # --- asking about cards the deck could not settle --------------------------
 
 
