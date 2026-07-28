@@ -76,16 +76,27 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Tagged with the release's own tag (e.g. v1.2.0) and moved onto
-      # :latest. Rebuilt from the same Dockerfile/context as the check
-      # above -- buildx's layer cache makes this instant, not a second build.
+      # Tagged with the release's own tag (e.g. v1.2.0) and moved onto :latest.
+      #
+      # Pushed straight from the local daemon rather than through a second
+      # build-push-action. buildx cannot both load an image into the daemon and
+      # push it to a registry in one call, and the checks above have to run on
+      # a real container before anything is published -- so publishing used to
+      # mean a second buildx run over the same context. That was cheap, since
+      # it hit the layer cache, but it published a rebuild rather than the
+      # image that had just passed. Identical in practice; a property of the
+      # cache, not a guarantee. Tagging what is already here removes the
+      # question, and the release ships the exact bytes that solved a deal and
+      # loaded their templates a few seconds earlier.
+      #
+      # The tag name arrives through the environment rather than interpolated
+      # into the script: it is attacker-shaped input in the general case, and
+      # `${{ }}` substitution happens before the shell sees the line.
       - name: Push
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          push: true
-          tags: |
-            ${{ env.IMAGE }}:${{ github.event.release.tag_name }}
-            ${{ env.IMAGE }}:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          for tag in "$RELEASE_TAG" latest; do
+            docker tag release-candidate "$IMAGE:$tag"
+            docker push "$IMAGE:$tag"
+          done
