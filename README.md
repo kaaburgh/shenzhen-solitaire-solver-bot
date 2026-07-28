@@ -5,14 +5,14 @@ it tells you whether the deal can still be won and, if so, the next five
 moves.
 
 ```
-Вот что я вижу:
-Ячейки:  DG  .  .   Цветок: да   Фундамент: G3 R1 B2
-
-1: B6 G5 R4
-2: R7 DB
-3: —
-4: G8 R6 B5 DG
-...
+Расклад прочитан. Сверять его целиком не надо — хватит этих карт:
+если ошибка есть, она почти наверняка в одной из них.
+• колонка 1, нижняя карта — 🔴4
+• колонка 2, верхняя карта — 🔴7
+• колонка 4, 3-я карта сверху — ⚫5
+• свободная ячейка 1 — 🟩
+🟢 бамбук · 🔴 монеты · ⚫ иероглифы · 🟩 🟥 ⬜ драконы · 🌸 цветок
+Сходится?
 
 ✅ Решение есть — 24 хода до победы.
 1. кол. 7 → в свободную ячейку: DR
@@ -227,9 +227,6 @@ The templates are cut from real screenshots, and rebuilding them is
 [docs/calibration.md](docs/calibration.md) — worth reading if the reader ever
 starts getting cards wrong.
 
-The bot always shows you the position it read and asks before spending time on
-it, and it names any card it is still unsure about.
-
 ### Screenshots sent as photos
 
 Telegram scales a photo's long side down to about 1280px, which puts the cards
@@ -268,6 +265,35 @@ where they happen to sit.
 Sending the screenshot **as a file** still avoids all of this — it arrives
 untouched — and it is what /help suggests when a card does come out wrong. It
 is no longer a requirement.
+
+## Confirming what was read
+
+The bot asks before spending time on a position, but it does not read the
+whole thing back. Forty cards is eight vertical stacks on screen and eight
+horizontal lines in a message — the layouts do not match, so confirming it
+means walking forty codes against forty pictures, and the effort is spread
+evenly over cards that deserve none of it. A card the matcher won by a mile is
+not where the mistake will be, and forty of those crowd out the two that are.
+
+So four slots go up instead, named where they sit rather than in the bot's own
+grid notation — "column 4, the bottom card" is something you can find without
+counting. Three of them are the reads the matcher was least sure of. The
+fourth is the one it was *most* sure of, and that one is the point: the shaky
+cards catch a misread glyph, while the confident one catches everything a list
+of doubts cannot see — a screenshot of a different deal, a grid anchored one
+slot over, a board that moved on between the screenshot and the message. Those
+get every card wrong at once, so no single card looks suspicious, and the only
+way to notice is to check one the bot claims to be certain about. It comes
+from a column none of the shaky ones came from, for the same reason.
+
+Cards are shown as colour and rank — `🔴9` rather than `R9`. The suit *is* a
+colour on the card, and a letter standing for it is one translation step in
+the middle of a job that is nothing but matching. Telegram has no coloured
+text, so the colour arrives as a glyph that carries its own: circles are the
+numbered suits, squares are the dragons, so shape says which kind of card
+before colour says which one. The whole board is still one button away for
+anyone who would rather look at all of it, and typing a position out skips the
+sampling entirely — there is nothing to be unsure of.
 
 ## Rules
 

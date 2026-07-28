@@ -115,16 +115,22 @@ class Recognition:
     resolution: Resolution | None = None
 
     @property
-    def uncertain(self) -> list[ReadCard]:
-        """Reads the deck did not pin down on its own.
+    def uncertain_indices(self) -> list[int]:
+        """Positions in ``reads`` the deck did not pin down on its own.
 
         Note this is not the same as the reads the classifier was unsure
         about: most of those are settled by elimination and never reach here.
         """
         if self.resolution is None:
-            return [r for r in self.reads if not r.confident and r.resolvable]
-        open_indices = set(self.resolution.open)
-        return [self.reads[i] for i in sorted(open_indices)]
+            return [
+                i for i, r in enumerate(self.reads) if not r.confident and r.resolvable
+            ]
+        return sorted(set(self.resolution.open))
+
+    @property
+    def uncertain(self) -> list[ReadCard]:
+        """The reads themselves, for callers that do not need the positions."""
+        return [self.reads[i] for i in self.uncertain_indices]
 
     @property
     def deduced(self) -> int:

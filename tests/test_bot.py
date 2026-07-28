@@ -11,9 +11,9 @@ import pytest
 from shenzhen.bot import handlers
 from shenzhen.bot.handlers import BotConfig
 from shenzhen.bot.storage import Sessions
-from shenzhen.cards import card_code, parse_card
+from shenzhen.cards import parse_card
 from shenzhen.game import deal
-from shenzhen.notation import board_to_text
+from shenzhen.notation import board_to_text, card_mark
 
 SOLVABLE = board_to_text(deal(0))
 
@@ -447,8 +447,8 @@ async def test_cards_the_deck_settles_are_never_asked_about(context, monkeypatch
 
     body = texts(log)
     assert "что там?" not in body, body
-    assert "1:" in body                      # went straight to the board
-    assert buttons(log) == ["solve", "fix"]
+    assert "Сходится?" in body                # went straight to confirming
+    assert buttons(log) == ["solve", "fix", "board"]
     assert "подставил" in body, body         # and said it had filled them in
 
 
@@ -477,8 +477,8 @@ async def test_answering_the_one_question_settles_the_rest_and_shows_the_board(c
     await press(context, answer, log)
 
     body = texts(log)
-    assert buttons(log) == ["solve", "fix"]  # done asking
-    assert "Всё верно?" in body
+    assert buttons(log) == ["solve", "fix", "board"]  # done asking
+    assert "Сходится?" in body
     session = context.application.bot_data["sessions"].get(1)
     assert session.pending is None
     assert session.board == recognition.state
@@ -502,13 +502,14 @@ async def test_cards_too_many_to_ask_about_are_named_as_the_board_reads_them(
     await send_photo(context, log, recognition, monkeypatch)
 
     body = texts(log)
-    assert "что там?" not in body, body      # no interview
-    assert buttons(log) == ["solve", "fix"]  # straight to confirm-or-fix
+    assert "что там?" not in body, body               # no interview
+    assert buttons(log) == ["solve", "fix", "board"]  # straight to confirm-or-fix
 
-    note = next(line for line in body.splitlines() if line.startswith("Не уверен"))
-    shown = card_code(recognition.state.columns[0][2])
-    assert f"1.3 = {shown}" in note, note    # the card the board actually shows
-    assert "G3" in note and "G8" in note, note   # and what else it could be
+    note = next(line for line in body.splitlines() if "3-я карта сверху" in line)
+    named = note.split("—")[-1].strip()
+    # The card the board actually shows, first, and what else it could be.
+    assert named.startswith(card_mark(recognition.state.columns[0][2])), note
+    assert card_mark(parse_card("G8")) in named, note
     assert view.card_at("1.3") == parse_card("G3")
 
 
@@ -573,6 +574,50 @@ async def test_the_users_own_answer_is_not_reported_back_as_deduced(context, mon
     # note should either be absent or say one, never two.
     body = texts(log)
     assert "подставил" not in body or " 1 " in body, body
+
+
+@pytest.mark.asyncio
+async def test_confirming_a_screenshot_asks_about_four_cards_not_forty(context, monkeypatch):
+    """The board is eight vertical stacks on screen and eight horizontal lines
+    in a message, so reading the whole thing back is forty codes to walk
+    against forty pictures in a layout that does not match. Four slots, named
+    where they sit, is the whole of what confirmation needs."""
+    _, recognition = _screenshot({
+        "1.1": ["G1", "G5"],
+        "3.1": ["R2", "R7"],
+        "5.1": ["B3", "B8"],
+    })
+    log: list = []
+    await send_photo(context, log, recognition, monkeypatch)
+
+    body = texts(log)
+    assert body.count("•") == 4, body
+    assert "колонка" in body                  # says where to look, in words
+    assert "\n1: " not in body, body          # and does not print the board
+
+
+@pytest.mark.asyncio
+async def test_the_cards_put_up_are_coloured_rather_than_lettered(context, monkeypatch):
+    _, recognition = _screenshot({"1.1": ["G1", "G5"]})
+    log: list = []
+    await send_photo(context, log, recognition, monkeypatch)
+
+    body = texts(log)
+    assert "🟢1" in body, body                # not "G1"
+    assert "бамбук" in body                   # with a legend for the colours
+
+
+@pytest.mark.asyncio
+async def test_the_whole_board_is_one_button_away_for_anyone_who_wants_it(context, monkeypatch):
+    _, recognition = _screenshot({"1.1": ["G1", "G5"]})
+    log: list = []
+    await send_photo(context, log, recognition, monkeypatch)
+    await press(context, "board", log)
+
+    shown = log[-1][0]
+    for index in range(1, 9):
+        assert f"{index}:" in shown, shown
+    assert "🟩" in shown                       # in colour, same as the sample
 
 
 @pytest.mark.asyncio
