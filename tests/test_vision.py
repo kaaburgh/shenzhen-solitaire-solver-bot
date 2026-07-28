@@ -31,8 +31,10 @@ from shenzhen.cards import (
 )
 from shenzhen.game import NUM_COLUMNS, InvalidBoard, State, auto_resolve
 from shenzhen.textio import parse_board
-from shenzhen.vision.classify import TemplateBank, ink_colour
+from shenzhen.vision.classify import Guess, TemplateBank, ink_colour
 from shenzhen.vision.layout import (
+    BoardLayout,
+    Box,
     LayoutConfig,
     LayoutError,
     corner_patch,
@@ -113,6 +115,45 @@ def test_a_board_whose_first_columns_are_empty_still_lines_up():
 def test_a_picture_that_is_not_the_board_is_refused():
     with pytest.raises(LayoutError):
         detect_layout(np.zeros((400, 400, 3), dtype=np.uint8), CONFIG)
+
+
+def test_a_glyphless_false_split_is_not_reported_as_an_extra_card(monkeypatch):
+    """A dragon glyph can imitate a card edge in a small image.
+
+    The resulting lower region has no corner glyph and is discarded.  It must
+    not survive as a warning about "card 2" beside a legal board which correctly
+    describes the dragon above it as the column's only card.
+    """
+    dragon = make_dragon(GREEN)
+    upper = Box(0, 0, 150, 36)
+    lower = Box(0, 36, 150, 251)
+    layout = BoardLayout(card_w=150, card_h=287, offset=36)
+    layout.columns[6] = [upper, lower]
+    monkeypatch.setattr(RECOGNIZE, "detect_layout", lambda _image, _config: layout)
+
+    guess = Guess(card=dragon, confidence=1.0, margin=1.0, colour=GREEN)
+    answers = iter((guess, None))
+    monkeypatch.setattr(RECOGNIZE, "classify", lambda _patch, _bank: next(answers))
+
+    state = State(
+        columns=((), (), (), (), (), (), (dragon,), ()),
+        free=(None, None, None),
+        foundations=(0, 0, 0),
+        flower=True,
+    )
+    monkeypatch.setattr(
+        RECOGNIZE,
+        "resolve",
+        lambda _skeleton, _reads: RECOGNIZE.Resolution(
+            state=state, unknowns=(), possibilities=(), level=0
+        ),
+    )
+
+    result = recognize(np.zeros((300, 300, 3), dtype=np.uint8), object())
+
+    assert [read.where for read in result.reads] == ["7.1"]
+    assert result.state.columns[6] == (dragon,)
+    assert result.warnings == []
 
 
 def test_ink_colour_separates_the_three_suits():
