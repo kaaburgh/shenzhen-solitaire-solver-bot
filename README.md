@@ -93,10 +93,16 @@ keeps nothing on disk.
 | `SHENZHEN_MAX_NODES` | `400000` | search budget, in positions |
 | `SHENZHEN_TIME_LIMIT` | `20` | search budget, in seconds |
 | `SHENZHEN_WORKERS` | `2` | how many positions may be solved at once |
+| `SHENZHEN_COVERAGE` | — | measure the running bot into this directory |
 | `LOG_LEVEL` | `INFO` | |
 
 Each worker pins a CPU core while it searches, which is why the default is 2
 rather than "as many as you have".
+
+`SHENZHEN_COVERAGE` is the odd one out: setting it restarts the bot under
+`coverage`, so that after a week of ordinary use you can look at what real
+conversations never reached and delete it. It costs the solver about a fifth
+of its search budget while it is on. See [docs/coverage.md](docs/coverage.md).
 
 ## Releases
 
@@ -296,7 +302,7 @@ CI runs the suite on Python 3.11, 3.12 and 3.13, lints with ruff, and builds
 the image — then checks the built image can actually solve a deal and load its
 template bank, rather than only that the build exited zero.
 
-119 tests, about 18 seconds. They cover the rules (runs, dragons, autocollect,
+135 tests, about 20 seconds. They cover the rules (runs, dragons, autocollect,
 deck validation), the solver — including replaying every move of a returned
 solution against a fresh board to check it really wins — the text format, and
 the conversation flow against stand-ins for Telegram's objects.
@@ -324,5 +330,5 @@ src/shenzhen/
   notation.py   rendering boards and moves, ru/en
   textio.py     parsing a typed position
   vision/       layout.py, classify.py, resolve.py, recognize.py, calibrate.py
-  bot/          main.py, handlers.py, i18n.py, storage.py
+  bot/          main.py, handlers.py, i18n.py, storage.py, runtime_coverage.py
 ```

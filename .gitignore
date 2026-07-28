@@ -14,3 +14,9 @@ screenshots/
 # Local Compose tweaks -- mounting a locally rebuilt template bank, pointing
 # at a different image tag. Machine-specific by nature.
 docker-compose.override.yml
+
+# Coverage of the running bot (docs/coverage.md).  The deployment keeps its
+# data in a Docker volume; these are what a local run leaves behind.
+.coverage*
+coverage-data/
+coverage-html/

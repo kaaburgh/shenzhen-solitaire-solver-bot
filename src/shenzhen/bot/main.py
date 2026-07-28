@@ -9,8 +9,11 @@ files mounted beyond the template bank:
 ``SHENZHEN_MAX_NODES``       search budget in positions (default 400000)
 ``SHENZHEN_TIME_LIMIT``      search budget in seconds (default 20)
 ``SHENZHEN_WORKERS``         solver processes (default 2)
+``SHENZHEN_COVERAGE``        measure the running bot into this directory
 ``LOG_LEVEL``                default ``INFO``
 ===========================  ==================================================
+
+See ``docs/coverage.md`` for what ``SHENZHEN_COVERAGE`` is for.
 """
 
 from __future__ import annotations
@@ -31,7 +34,7 @@ from telegram.ext import (
 
 from ..solver import DEFAULT_MAX_NODES, DEFAULT_TIME_LIMIT
 from ..vision import load_bank
-from . import handlers
+from . import handlers, runtime_coverage
 from .handlers import BotConfig
 from .storage import Sessions
 
@@ -65,7 +68,7 @@ def build_application(token: str) -> Application:
     )
     workers = int(os.environ.get("SHENZHEN_WORKERS", "2"))
 
-    builder = ApplicationBuilder().token(token).post_shutdown(_shutdown)
+    builder = ApplicationBuilder().token(token).post_init(_startup).post_shutdown(_shutdown)
     try:
         # Keeps the bot inside Telegram's send limits under load.  It needs the
         # [rate-limiter] extra, which requirements.txt pins -- but a bare
@@ -96,10 +99,22 @@ def build_application(token: str) -> Application:
     return application
 
 
+async def _startup(application: Application) -> None:
+    application.bot_data["coverage_task"] = runtime_coverage.start_periodic_save()
+
+
 async def _shutdown(application: Application) -> None:
+    coverage_task = application.bot_data.get("coverage_task")
+    # Ours goes to disk first: waiting on the workers below can outlast
+    # Docker's patience, and a process that gets killed mid-wait should still
+    # have written what it collected.
+    await runtime_coverage.stop_periodic_save(coverage_task)
+
     executor: ProcessPoolExecutor | None = application.bot_data.get("executor")
     if executor is not None:
-        executor.shutdown(wait=False, cancel_futures=True)
+        # Under coverage the workers have data of their own to write, and they
+        # only get to write it if they are allowed to finish shutting down.
+        executor.shutdown(wait=coverage_task is not None, cancel_futures=True)
 
 
 def main() -> None:
@@ -108,6 +123,11 @@ def main() -> None:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
     logging.getLogger("httpx").setLevel(logging.WARNING)
+
+    # May replace this process with one running under coverage.  Logging is up
+    # by now so the swap says so in the log, and nothing else has happened yet
+    # that would be lost by it.
+    runtime_coverage.reexec_if_requested()
 
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
     if not token:

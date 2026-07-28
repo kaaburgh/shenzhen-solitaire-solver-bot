@@ -26,6 +26,10 @@ RUN pip install --no-cache-dir --no-index --find-links=/wheels -r requirements.t
 COPY src/ /app/src/
 COPY templates/ /app/templates/
 
+# Exists so that a volume mounted here inherits an ownership the bot user can
+# write to.  Empty and unused unless SHENZHEN_COVERAGE points at it.
+RUN mkdir -p /data/coverage && chown bot:bot /data/coverage
+
 ENV PYTHONPATH=/app/src \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
