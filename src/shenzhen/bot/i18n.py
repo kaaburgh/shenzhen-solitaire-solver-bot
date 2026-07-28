@@ -16,8 +16,9 @@ STRINGS: dict[str, dict[str, str]] = {
         "help": (
             "<b>Как пользоваться</b>\n"
             "Пришли скриншот доски или опиши расклад текстом.\n"
-            "Скриншот лучше отправлять <b>файлом</b>: обычное фото Telegram "
-            "пережимает, и мелкие значки карт плывут.\n\n"
+            "Обычного фото достаточно — сжатие Telegram я переживу. Если "
+            "какая-то карта всё же не прочитается, спрошу про неё; а скриншот "
+            "<b>файлом</b> доходит без сжатия и вопросов обычно не вызывает.\n\n"
             "<b>Обозначения карт</b>\n"
             "<code>G1</code>…<code>G9</code> — зелёная масть (бамбук)\n"
             "<code>R1</code>…<code>R9</code> — красная масть (монеты)\n"
@@ -62,7 +63,7 @@ STRINGS: dict[str, dict[str, str]] = {
             "🟢 бамбук · 🔴 монеты · ⚫ иероглифы · "
             "🟩 🟥 ⬜ драконы · 🌸 цветок · 🔒 схлопнутые драконы"
         ),
-        "uncertain": "Не уверен в этих картах: {cards}",
+        "uncertain": "Не уверен в этих картах:",
         "warnings": "Замечания: {items}",
         "btn_correct": "✅ Верно, решай",
         "btn_fix": "✏️ Исправить",
@@ -91,8 +92,7 @@ STRINGS: dict[str, dict[str, str]] = {
         "ask_expired": "Этот вопрос уже неактуален — пришли скриншот заново.",
         "board_narrow": (
             "Картинка мелковата — карты {card_w} px в ширину. Расклад сошёлся "
-            "по колоде, так что он почти наверняка верный, но глазом проверь. "
-            "Скриншот <b>файлом</b> читается без этой оговорки."
+            "по колоде, так что он почти наверняка верный, но глазом проверь."
         ),
         "btn_other": "Другое…",
         "btn_type": "✏️ Введу текстом",
@@ -119,15 +119,16 @@ STRINGS: dict[str, dict[str, str]] = {
             "Пришли скриншот целиком, без обрезки и без масштабирования, "
             "либо опиши расклад текстом — /help"
         ),
-        "image_rescaled": (
-            "Картинка уменьшена — карты всего {card_w} px в ширину, "
-            "и значки номиналов размылись настолько, что «3» уже не отличить "
-            "от «8».\n\n"
-            "Это Telegram сжимает то, что отправлено <b>фотографией</b>. "
-            "Пришли тот же скриншот <b>файлом</b>: скрепка → Файл (на телефоне "
-            "может называться «Документ»), и выбери его из галереи. "
-            "Тогда он дойдёт как есть и прочитается.\n\n"
-            "Либо опиши расклад текстом — /help"
+        "bad_reading": (
+            "Скриншот я разобрал, но расклад не сходится по колоде: {reason}\n\n"
+            "Значит, часть карт я прочитал неверно. Вот всё, что я увидел — "
+            "поправь неверные карты и пришли этот текст обратно:"
+        ),
+        "bad_reading_narrow": (
+            "Картинка мелковата — карты {card_w} px в ширину, значки номиналов "
+            "размыты. Если проще, пришли тот же скриншот <b>файлом</b> "
+            "(скрепка → Файл, на телефоне может называться «Документ») — "
+            "тогда он дойдёт без сжатия."
         ),
         "not_an_image": (
             "Это не похоже на картинку. Пришли скриншот доски — фотографией "
@@ -160,8 +161,10 @@ STRINGS: dict[str, dict[str, str]] = {
         "help": (
             "<b>How to use</b>\n"
             "Send a screenshot of the board, or type the position out.\n"
-            "Send the screenshot <b>as a file</b> if you can: Telegram "
-            "recompresses ordinary photos and the small card glyphs smear.\n\n"
+            "An ordinary photo is fine — I can live with Telegram's "
+            "compression. If a card still will not come out I will ask you "
+            "about it; sending the screenshot <b>as a file</b> avoids the "
+            "compression altogether and usually avoids the questions.\n\n"
             "<b>Card notation</b>\n"
             "<code>G1</code>…<code>G9</code> — green suit (bamboo)\n"
             "<code>R1</code>…<code>R9</code> — red suit (coins)\n"
@@ -206,7 +209,7 @@ STRINGS: dict[str, dict[str, str]] = {
             "🟢 bamboo · 🔴 coins · ⚫ characters · "
             "🟩 🟥 ⬜ dragons · 🌸 flower · 🔒 collapsed dragons"
         ),
-        "uncertain": "Not sure about these: {cards}",
+        "uncertain": "Not sure about these:",
         "warnings": "Notes: {items}",
         "btn_correct": "✅ Right, solve it",
         "btn_fix": "✏️ Fix it",
@@ -236,7 +239,7 @@ STRINGS: dict[str, dict[str, str]] = {
         "board_narrow": (
             "The picture came in small — cards {card_w}px wide. The position "
             "does add up against the deck, so it is very probably right, but "
-            "give it a look. Sent <b>as a file</b> there is no such caveat."
+            "give it a look."
         ),
         "btn_other": "Other…",
         "btn_type": "✏️ I will type it",
@@ -263,15 +266,17 @@ STRINGS: dict[str, dict[str, str]] = {
             "Send the full screenshot, uncropped and unscaled, or type the "
             "position out — /help"
         ),
-        "image_rescaled": (
-            "The picture has been scaled down — the cards are only {card_w}px "
-            "wide, and the rank glyphs are blurred past the point where a 3 "
-            "can be told from an 8.\n\n"
-            "That is Telegram compressing anything sent as a <b>photo</b>. "
-            "Send the same screenshot <b>as a file</b> instead: the paperclip "
-            "→ File (your phone may call it Document), then pick it from the "
-            "gallery. It arrives untouched and reads fine.\n\n"
-            "Or type the position out — /help"
+        "bad_reading": (
+            "I read the screenshot, but the position does not add up against "
+            "the deck: {reason}\n\n"
+            "So some of the cards came out wrong. Here is everything I saw — "
+            "fix the wrong ones and send this text back:"
+        ),
+        "bad_reading_narrow": (
+            "The picture came in small — cards {card_w}px wide, and the rank "
+            "glyphs are blurred. If it is easier, send the same screenshot "
+            "<b>as a file</b> (paperclip → File, your phone may call it "
+            "Document) and it arrives uncompressed."
         ),
         "not_an_image": (
             "That does not look like a picture. Send a screenshot of the board "

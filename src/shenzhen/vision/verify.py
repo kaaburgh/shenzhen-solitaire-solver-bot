@@ -67,33 +67,38 @@ def _quality(read) -> tuple[float, float]:
     return (getattr(guess, "margin", 1.0), getattr(guess, "confidence", 1.0))
 
 
-def _tier(index: int, read, resolution) -> int:
+def _tier(read) -> int:
     """How much doubt is left on a read once the deck has had its say.
 
-    Three grades, because they fail differently.  A read the surviving boards
-    still disagree about is a coin toss the bot has called.  A read the
-    matcher flagged and the deck then settled is only as sound as the forty
-    cards it was settled against.  Everything else is a read that stood on its
-    own.
+    A read the matcher flagged and the deck then settled is only as sound as
+    the forty cards it was settled against.  Everything else stood on its own.
     """
-    if resolution is not None and index in resolution.open:
-        return 0
-    if not read.confident:
-        return 1
-    return 2
+    return 0 if not read.confident else 1
+
+
+def _open(index: int, resolution) -> bool:
+    """Is this a read the surviving boards still disagree about?
+
+    Those are not confirmations, they are questions, and the bot puts them as
+    questions -- one at a time as an interview, or listed with their
+    alternatives when there are too many for that to be worth anyone's time.
+    Either way the slot is already in front of the user with more to say about
+    it than a spot check could, so it must not also eat one of the four.
+    """
+    return resolution is not None and index in resolution.open
 
 
 def _resolved(index: int, read, resolution, pinned: dict[int, int]) -> int:
-    """The card the bot ended up with for this read."""
+    """The card the bot ended up with for this read.
+
+    Not the matcher's own winner where the deck overruled it: the board being
+    shown holds the corrected card, and asking someone to confirm the reading
+    that lost would be asking about a card the bot is not going to use.
+    """
     if index in pinned:
         return pinned[index]
-    if resolution is not None:
-        if index in resolution.settled:
-            return resolution.settled[index]
-        if index in resolution.open:
-            options = resolution.options(index)
-            if options:
-                return options[0]
+    if resolution is not None and index in resolution.settled:
+        return resolution.settled[index]
     return read.card
 
 
@@ -108,7 +113,8 @@ def spot_checks(
 
     ``pinned`` are the reads the user has already answered a question about;
     those are excluded, since asking someone to confirm what they just typed
-    tests nothing.  So is the flower slot, which cannot hold anything else.
+    tests nothing.  So is the flower slot, which cannot hold anything else,
+    and so is anything still open -- see :func:`_open`.
 
     Comes back empty when there is nothing to sample -- a position that was
     typed out rather than read off a picture -- which is the caller's cue to
@@ -118,13 +124,13 @@ def spot_checks(
     candidates = [
         index
         for index, read in enumerate(reads)
-        if read.resolvable and index not in pinned
+        if read.resolvable and index not in pinned and not _open(index, resolution)
     ]
     if not candidates:
         return ()
 
     def shakiness(index: int) -> tuple[int, float, float]:
-        return (_tier(index, reads[index], resolution), *_quality(reads[index]))
+        return (_tier(reads[index]), *_quality(reads[index]))
 
     remaining = sorted(candidates, key=lambda i: (shakiness(i), i))
     chosen: list[int] = []
@@ -141,7 +147,7 @@ def spot_checks(
         used.add(_group(reads[pick].where))
         remaining.remove(pick)
 
-    control = _control(reads, resolution, candidates, chosen, used)
+    control = _control(reads, candidates, chosen, used)
     if control is not None:
         chosen.append(control)
 
@@ -160,7 +166,6 @@ def spot_checks(
 
 def _control(
     reads: Sequence,
-    resolution,
     candidates: Sequence[int],
     chosen: Sequence[int],
     used: set[str],
@@ -175,7 +180,7 @@ def _control(
     best: tuple[bool, float, float, int] | None = None
     control = None
     for index in candidates:
-        if index in chosen or _tier(index, reads[index], resolution) != 2:
+        if index in chosen or not reads[index].confident:
             continue
         margin, confidence = _quality(reads[index])
         key = (_group(reads[index].where) in used, -margin, -confidence, index)

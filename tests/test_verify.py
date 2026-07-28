@@ -76,6 +76,20 @@ def test_a_card_the_user_has_already_answered_is_not_put_back_up():
     assert "1.3" not in {c.where for c in checks}
 
 
+def test_a_card_still_open_is_left_to_the_question_rather_than_spot_checked():
+    """An open card is not a confirmation, it is a question -- and the bot puts
+    it as one, with its alternatives, right beside the sample. Listing it twice
+    would spend one of the four slots saying less than the line above it."""
+    open_slots = {"1.3": ["G3", "G8"], "2.3": ["G8", "G3"]}
+    view = screen(AMBIGUOUS, unsure=open_slots)
+    resolution = resolve(view.skeleton, view.reads)
+    assert set(resolution.open) == {view.index_of(w) for w in open_slots}
+
+    checks = spot_checks(view.reads, resolution)
+    assert not set(open_slots) & {c.where for c in checks}
+    assert len(checks) == DOUBTS + 1
+
+
 def test_the_flower_slot_is_never_sampled():
     """It can only ever hold the flower, however badly the glyph reads."""
     view, checks = sampled({"flower": ["F", "G3"]})

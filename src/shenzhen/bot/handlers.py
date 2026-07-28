@@ -212,16 +212,19 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             None, functools.partial(_recognize_bytes, data, config.bank)
         )
     except RecognitionError as exc:
-        # A board that cannot exist usually means the picture was too small to
-        # read, not that it was the wrong picture -- and those two need
-        # completely different things from the user, so say which.
-        if exc.likely_rescaled:
-            await message.reply_text(
-                t(session.lang, "image_rescaled", card_w=exc.card_w),
-                parse_mode=ParseMode.HTML,
-            )
-        else:
+        # The picture is a board, it just did not come out as one that could
+        # exist. Nothing here is worth throwing away: most of the forty cards
+        # will be right, so hand the reading back for the user to correct
+        # rather than asking them for a better screenshot.
+        draft = exc.draft
+        if draft is None:
             await message.reply_text(t(session.lang, "bad_image", reason=str(exc)))
+            return
+        lines = [t(session.lang, "bad_reading", reason=str(exc))]
+        if exc.narrow:
+            lines.append(t(session.lang, "bad_reading_narrow", card_w=exc.card_w))
+        lines.append(_pre(draft))
+        await message.reply_text("\n".join(lines), parse_mode=ParseMode.HTML)
         return
     except LayoutError as exc:
         await message.reply_text(t(session.lang, "bad_image", reason=str(exc)))
@@ -249,30 +252,55 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await _ask(message, session, intro=True)
         return
 
-    reads = result.reads
-    uncertain = [
-        t(
-            session.lang,
-            "check_line",
-            slot=_slot(reads, index, session.lang),
-            card=card_mark(reads[index].card),
-        )
-        for index in result.uncertain_indices
-    ]
     await _accept_board(
         message,
         session,
         result.state,
-        uncertain=uncertain,
+        uncertain=_open_cards(resolution, result.reads, session.lang),
         warnings=result.warnings,
         deduced=result.deduced,
         narrow=result.narrow,
-        checks=spot_checks(reads, resolution),
+        checks=spot_checks(result.reads, resolution),
     )
 
 
 def _recognize_bytes(data: bytes, bank: TemplateBank):
     return recognize(load_image(data), bank)
+
+
+#: how many alternatives to name for one card before the list stops helping
+OPTIONS_LISTED = 3
+
+
+def _open_cards(resolution, reads: Sequence, lang: str) -> list[str]:
+    """The cards the deck could not pin down, each with what it might be.
+
+    Named off the resolution rather than off the raw reads, because those two
+    disagree exactly where it matters: the board being shown holds the deck's
+    best surviving reading of an open card, while the matcher's own winner is
+    whatever lost. Listing the latter beside the former tells the user their
+    board says G3 and the bot is unsure it is G8 -- two claims about one slot,
+    neither of them the question actually being asked.
+
+    And the alternatives come along, since this is the list the user is being
+    asked to check against the screen. "column 3, the bottom card is 🟢3 or
+    🟢8" says where to look and what to look for; naming one card only reads
+    like a claim.
+    """
+    if resolution is None:
+        return []
+    lines = []
+    for index in resolution.open:
+        options = resolution.options(index)[:OPTIONS_LISTED]
+        lines.append(
+            t(
+                lang,
+                "check_line",
+                slot=_slot(reads, index, lang),
+                card=" / ".join(card_mark(card) for card in options),
+            )
+        )
+    return lines
 
 
 # --- asking about cards the deck could not settle --------------------------
@@ -366,20 +394,11 @@ async def _answer_question(query, session: Session, index: int, card: int) -> No
         return
 
     session.pending = None
-    uncertain = [
-        t(
-            session.lang,
-            "check_line",
-            slot=_slot(pending.reads, i, session.lang),
-            card=card_mark(resolution.options(i)[0]),
-        )
-        for i in resolution.open
-    ]
     await _accept_board(
         query.message,
         session,
         resolution.state,
-        uncertain=uncertain,
+        uncertain=_open_cards(resolution, pending.reads, session.lang),
         warnings=pending.warnings,
         checks=spot_checks(pending.reads, resolution, pinned),
         # `settled` is recomputed from scratch and counts the answers just
@@ -451,7 +470,10 @@ async def _accept_board(
     if deduced:
         lines.append(t(session.lang, "ask_deduced", n=deduced))
     if uncertain:
-        lines.append(t(session.lang, "uncertain", cards="; ".join(uncertain)))
+        # Its own lines rather than one run-on sentence: these read the same
+        # way as the spot check above them, and they are checked the same way.
+        lines.append(t(session.lang, "uncertain"))
+        lines.extend(uncertain)
     if warnings:
         lines.append(t(session.lang, "warnings", items="; ".join(warnings)))
     if narrow is not None:
