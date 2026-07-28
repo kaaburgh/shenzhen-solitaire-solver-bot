@@ -13,6 +13,16 @@ services:
       SHENZHEN_TIME_LIMIT: "20"
       SHENZHEN_WORKERS: "2"
       LOG_LEVEL: INFO
+      # Uncomment to measure which code real conversations actually reach, then
+      # `docker compose up -d` to restart into it.  Costs the solver roughly a
+      # fifth of its search budget; see docs/coverage.md before turning it on
+      # and for how to read the data back out.
+      # SHENZHEN_COVERAGE: /data/coverage
+    volumes:
+      # Survives restarts and image updates, so a week of measuring is a week
+      # of data.  Holds nothing when coverage is switched off.
+      - coverage:/data/coverage
+    #
     # No bind mount over /app/templates on purpose. The card templates are
     # baked into the image and belong to the same release as the code that
     # reads them; mounting the checkout's copy on top would mask them, and
@@ -27,3 +37,6 @@ services:
     #     bot:
     #       volumes:
     #         - ./templates:/app/templates:ro
+
+volumes:
+  coverage:

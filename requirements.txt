@@ -2,3 +2,6 @@
 python-telegram-bot[rate-limiter]==21.10
 opencv-python-headless==5.0.0.93
 numpy==2.4.6
+# Only imported when SHENZHEN_COVERAGE is set, but it has to be in the image
+# for that switch to be a restart rather than a rebuild.  See docs/coverage.md.
+coverage==7.15.2

@@ -14,7 +14,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "pytest-asyncio>=0.24"]
+dev = ["pytest>=8", "pytest-asyncio>=0.24", "coverage>=7.6"]
 
 [project.scripts]
 shenzhen-bot = "shenzhen.bot.main:main"
