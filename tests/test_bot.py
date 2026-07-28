@@ -337,7 +337,8 @@ async def test_answering_the_one_question_settles_the_rest_and_shows_the_board(c
 @pytest.mark.asyncio
 async def test_none_of_these_widens_the_choice_instead_of_dead_ending(context, monkeypatch):
     view, recognition = _screenshot({
-        "5.1": ["B3", "B4", "B5", "B6", "B7"],
+        # B7 scored ninth here, past where the shortlist stops looking.
+        "5.1": ["B3", "B4", "B5", "B6", "B8", "B9", "G1", "G2", "B7"],
         "5.2": ["B4", "B3"],
         "5.5": ["B7", "B3"],
     })
@@ -358,12 +359,11 @@ async def test_an_answer_that_breaks_the_deck_is_refused_rather_than_accepted(co
     await send_photo(context, log, recognition, monkeypatch)
 
     session = context.application.bot_data["sessions"].get(1)
-    session.pinned = {}
     # Force both slots to G3, which the deck cannot supply twice.
     first, second = view.index_of("1.3"), view.index_of("2.3")
     g3 = parse_card("G3")
     session.pending.pinned = {first: g3}
-    await press(context, f"pick:{second}:{g3}", log)
+    await press(context, f"pick:{session.pending.token}:{second}:{g3}", log)
 
     assert "не сходится" in texts(log)
     assert session.pending is not None       # earlier answers kept
@@ -395,3 +395,27 @@ async def test_the_users_own_answer_is_not_reported_back_as_deduced(context, mon
     # note should either be absent or say one, never two.
     body = texts(log)
     assert "подставил" not in body or " 1 " in body, body
+
+
+@pytest.mark.asyncio
+async def test_a_button_from_an_earlier_screenshot_is_not_taken_as_an_answer(
+    context, monkeypatch
+):
+    """Old keyboards never go away. A read index from the first screenshot
+    addresses a different card on the second, so applying it there would be
+    accepted wherever it happened to be deck-legal and quietly give the wrong
+    board."""
+    view, first = _screenshot({"1.3": ["G3", "G8"], "2.3": ["G8", "G3"]})
+    log: list = []
+    await send_photo(context, log, first, monkeypatch)
+    stale = next(b for b in buttons(log) if b.startswith("pick:"))
+
+    _, second = _screenshot({"3.3": ["R4", "R5"], "3.4": ["R5", "R4"]})
+    await send_photo(context, log, second, monkeypatch)
+
+    session = context.application.bot_data["sessions"].get(1)
+    before = dict(session.pending.pinned)
+    await press(context, stale, log)
+
+    assert "неактуален" in texts(log)
+    assert session.pending.pinned == before  # the stale answer changed nothing

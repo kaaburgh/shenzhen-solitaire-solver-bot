@@ -25,6 +25,11 @@ class Pending:
     question costs no memory beyond the card scores already worked out.
     """
 
+    #: identifies this interview in callback data.  A keyboard from an earlier
+    #: screenshot stays live in the chat forever, and its buttons carry read
+    #: indices that mean something else entirely against a later one -- so the
+    #: answer has to say which screenshot it is answering about.
+    token: int
     skeleton: Skeleton
     reads: list
     resolution: Resolution
@@ -51,6 +56,13 @@ class Session:
     busy: bool = False
     #: set while the bot is asking about cards it could not read
     pending: Pending | None = None
+    #: how many interviews this chat has started, so each gets its own token
+    interviews: int = 0
+
+    def start_interview(self, **kwargs) -> Pending:
+        self.interviews += 1
+        self.pending = Pending(token=self.interviews, **kwargs)
+        return self.pending
 
 
 class Sessions:

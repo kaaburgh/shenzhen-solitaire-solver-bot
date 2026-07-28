@@ -213,13 +213,24 @@ def recognize(
     except Unresolvable as exc:
         raise RecognitionError(str(exc), reads=reads, card_w=layout.card_w) from exc
 
+    if resolution.truncated:
+        # The search stopped before it had seen every legal reading, so its
+        # best-scoring board is the pick of an arbitrary prefix rather than of
+        # the field.  Nothing about that is worth showing, at any card width:
+        # what makes a settled card trustworthy is having looked at all the
+        # alternatives, which is exactly what did not happen here.
+        raise RecognitionError(
+            "too many readings of this board survive to tell them apart",
+            reads=reads,
+            card_w=layout.card_w,
+        )
+
     if layout.card_w < MIN_RELIABLE_CARD_WIDTH and not resolution.interviewable:
         # A picture this small is only worth trusting when the deck could
-        # check it -- and here it could not: either too many readings survive
-        # to enumerate, or too many cards are still open to be worth asking
-        # about one at a time.  Guessing at the likeliest of hundreds of
-        # boards would waste more of the user's time than resending the
-        # screenshot as a file, which fixes the cause rather than the symptom.
+        # check it -- and here it could not: too many cards are still open to
+        # be worth asking about one at a time.  Working through a dozen
+        # questions would cost the user more than resending the screenshot as
+        # a file, which fixes the cause rather than the symptom.
         raise RecognitionError(
             f"too many cards are unreadable at {layout.card_w}px to pin the board down",
             reads=reads,

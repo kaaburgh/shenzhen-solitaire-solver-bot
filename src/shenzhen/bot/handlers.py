@@ -21,7 +21,7 @@ from ..textio import parse_board
 from ..vision import LayoutError, RecognitionError, TemplateBank, load_image, recognize
 from ..vision.resolve import Unresolvable, resolve, widest_options
 from .i18n import normalise_lang, t
-from .storage import Pending, Session, Sessions
+from .storage import Session, Sessions
 
 log = logging.getLogger(__name__)
 
@@ -152,7 +152,7 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     # Only the cards the deck could not pin down are worth a question, and
     # only if there are few enough of them to be worth anyone's time.
     if resolution is not None and resolution.open and resolution.interviewable:
-        session.pending = Pending(
+        session.start_interview(
             skeleton=result.skeleton,
             reads=result.reads,
             resolution=resolution,
@@ -183,16 +183,27 @@ def _recognize_bytes(data: bytes, bank: TemplateBank):
 # --- asking about cards the deck could not settle --------------------------
 
 
-def _option_rows(index: int, cards: Sequence[int]) -> list[list[InlineKeyboardButton]]:
+def _option_rows(token: int, index: int, cards: Sequence[int]) -> list[list[InlineKeyboardButton]]:
     rows = []
     for start in range(0, len(cards), OPTIONS_PER_ROW):
         rows.append(
             [
-                InlineKeyboardButton(card_code(card), callback_data=f"pick:{index}:{card}")
+                InlineKeyboardButton(card_code(card), callback_data=f"pick:{token}:{index}:{card}")
                 for card in cards[start : start + OPTIONS_PER_ROW]
             ]
         )
     return rows
+
+
+def _for_current_interview(session: Session, raw_token: str) -> bool:
+    """Is this button from the screenshot the bot is currently asking about?
+
+    A keyboard sent for an earlier screenshot never goes away, and its read
+    indices address a different board.  Applied to the current one they would
+    be accepted as an answer wherever they happened to be deck-legal, and
+    quietly produce the wrong position.
+    """
+    return session.pending is not None and session.pending.token == int(raw_token)
 
 
 async def _ask(message, session: Session, *, intro: bool = False, edit=None) -> None:
@@ -224,10 +235,10 @@ async def _ask(message, session: Session, *, intro: bool = False, edit=None) -> 
         lines.append(t(session.lang, "ask_left", n=remaining))
 
     keyboard = InlineKeyboardMarkup(
-        _option_rows(index, options)
+        _option_rows(pending.token, index, options)
         + [
             [
-                InlineKeyboardButton(t(session.lang, "btn_other"), callback_data=f"wide:{index}"),
+                InlineKeyboardButton(t(session.lang, "btn_other"), callback_data=f"wide:{pending.token}:{index}"),
                 InlineKeyboardButton(t(session.lang, "btn_type"), callback_data="fix"),
             ]
         ]
@@ -299,7 +310,7 @@ async def _offer_everything(query, session: Session, index: int) -> None:
         t(session.lang, "ask_other"),
     ]
     keyboard = InlineKeyboardMarkup(
-        _option_rows(index, options)
+        _option_rows(pending.token, index, options)
         + [[InlineKeyboardButton(t(session.lang, "btn_type"), callback_data="fix")]]
     )
     await query.edit_message_text(
@@ -362,8 +373,8 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
     if data.startswith("pick:"):
         await query.answer()
-        _, raw_index, raw_card = data.split(":", 2)
-        if session.pending is None:
+        _, raw_token, raw_index, raw_card = data.split(":", 3)
+        if not _for_current_interview(session, raw_token):
             await query.message.reply_text(t(session.lang, "ask_expired"))
             return
         await _answer_question(query, session, int(raw_index), int(raw_card))
@@ -371,10 +382,11 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
     if data.startswith("wide:"):
         await query.answer()
-        if session.pending is None:
+        _, raw_token, raw_index = data.split(":", 2)
+        if not _for_current_interview(session, raw_token):
             await query.message.reply_text(t(session.lang, "ask_expired"))
             return
-        await _offer_everything(query, session, int(data.split(":", 1)[1]))
+        await _offer_everything(query, session, int(raw_index))
         return
 
     if data == "fix":

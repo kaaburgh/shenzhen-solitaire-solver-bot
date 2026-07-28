@@ -157,7 +157,15 @@ class Skeleton:
         purpose: their four dragons depend on what the rest of the board turns
         out to be, and under-counting only ever makes the search look at more
         combinations, never at fewer -- :func:`validate` has the last word.
+
+        A read the skeleton does not place costs nothing.  That is the flower
+        slot: :meth:`build` takes only the fact that it is occupied, never the
+        card read there, so charging the deck for a misread glyph would leave
+        the real copy of that card looking like a duplicate and sink every
+        legal reading of the board.
         """
+        if index not in self._placed_reads:
+            return Counter()
         if index in self._foundation_reads and is_suit_card(card):
             suit = suit_of(card)
             return Counter(
@@ -168,6 +176,16 @@ class Skeleton:
     @property
     def _foundation_reads(self) -> frozenset[int]:
         return frozenset(i for i in self.foundations if i is not None)
+
+    @property
+    def _placed_reads(self) -> frozenset[int]:
+        """The reads :meth:`build` actually puts on the board."""
+        indices: set[int] = set()
+        for group in self.columns:
+            indices.update(group)
+        indices.update(i for i in self.free if i is not None)
+        indices.update(i for i in self.foundations if i is not None)
+        return frozenset(indices)
 
     def placed(self, cards: Sequence[int], indices: Iterable[int]) -> Counter[int]:
         """What the reads in ``indices`` take out of the deck, together."""
@@ -308,17 +326,41 @@ def resolve(
     specific one.
     """
     pinned = dict(pinned or {})
-    levels = LEVELS if level is None else (LEVELS[level],)
-    offset = 0 if level is None else level
 
-    for step, current in enumerate(levels):
-        unknowns = _unknowns(reads, current, pinned)
+    if level is not None:
+        # Answering a question: the level was settled when the interview
+        # started and must not move, or the read indices already pinned would
+        # start meaning something else.
+        return _at_level(skeleton, reads, pinned, level)
+
+    # The first level that finds anything is not the answer -- it is only
+    # evidence that an answer exists around here.  Being the unique legal
+    # reading among four candidates per slot is not the same as being certain:
+    # if two slots really hold G3 and G8 but each ranks the other first and
+    # its own card fifth, the swapped reading is the only one the narrow
+    # shortlist admits, and it is wrong.  So the board comes from one level
+    # wider than the level that found it, where the truth is in reach and the
+    # disagreement becomes a question instead of a silent mistake.
+    for step in range(len(LEVELS)):
+        unknowns = _unknowns(reads, LEVELS[step], pinned)
         if unknowns is None:
             continue
+        possibilities, _ = _search(skeleton, reads, unknowns, pinned)
+        if not possibilities:
+            continue
+        return _at_level(skeleton, reads, pinned, min(step + 1, len(LEVELS) - 1))
+
+    raise Unresolvable(str(_complaint(skeleton, reads, pinned)))
+
+
+def _at_level(
+    skeleton: Skeleton, reads: Sequence, pinned: dict[int, int], level: int
+) -> Resolution:
+    unknowns = _unknowns(reads, LEVELS[level], pinned)
+    if unknowns is not None:
         possibilities, truncated = _search(skeleton, reads, unknowns, pinned)
         if possibilities:
-            return _summarise(unknowns, possibilities, offset + step, truncated)
-
+            return _summarise(unknowns, possibilities, level, truncated)
     raise Unresolvable(str(_complaint(skeleton, reads, pinned)))
 
 

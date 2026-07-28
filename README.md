@@ -194,6 +194,13 @@ before the next question is chosen: pinning one of two slots that might be the
 3 or the 8 pins the other one too. Worst case across the degraded fixtures was
 two questions.
 
+Being the only legal reading is not by itself proof, though — a shortlist that
+cannot see the true card can have exactly one survivor and still be wrong. So
+the board never comes from the first shortlist that works: whichever level
+finds an answer, the answer is taken from one level wider, where the truth is
+in reach and a disagreement turns into a question rather than a silent
+mistake.
+
 When even that cannot close — too many cards unreadable for the elimination to
 bite — the bot says so and asks for the screenshot as a file, rather than
 offering the likeliest of several hundred boards. Below the reliable width,
@@ -289,7 +296,7 @@ CI runs the suite on Python 3.11, 3.12 and 3.13, lints with ruff, and builds
 the image — then checks the built image can actually solve a deal and load its
 template bank, rather than only that the build exited zero.
 
-116 tests, about 15 seconds. They cover the rules (runs, dragons, autocollect,
+119 tests, about 18 seconds. They cover the rules (runs, dragons, autocollect,
 deck validation), the solver — including replaying every move of a returned
 solution against a fresh board to check it really wins — the text format, and
 the conversation flow against stand-ins for Telegram's objects.

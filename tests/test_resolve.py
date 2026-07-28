@@ -256,13 +256,13 @@ def test_an_answer_that_cannot_coexist_with_the_rest_is_rejected():
 
 
 def test_none_of_these_offers_cards_the_shortlist_left_out():
-    """The escape hatch.  B7 scored fifth for slot 5.1, so the shortlist cuts
-    it -- but there is a legal board with it there, and the user is the one
-    who can see that."""
+    """The escape hatch.  B7 scored ninth for slot 5.1, past where the
+    shortlist stops looking -- but there is a legal board with it there, and
+    the user is the one who can see that."""
     view = screen(
         AMBIGUOUS,
         unsure={
-            "5.1": ["B3", "B4", "B5", "B6", "B7"],  # capped to the first four
+            "5.1": ["B3", "B4", "B5", "B6", "B8", "B9", "G1", "G2", "B7"],
             "5.2": ["B4", "B3"],
             "5.5": ["B7", "B3"],
         },
@@ -334,3 +334,52 @@ def test_the_flower_slot_is_never_a_question():
     assert flower not in resolution.open
     assert flower not in resolution.settled
     assert resolution.state == AMBIGUOUS
+
+
+def test_a_misread_flower_slot_does_not_eat_a_card_from_the_deck():
+    """The flower slot is not part of the board the skeleton builds -- only
+    the fact that it is occupied is. So whatever its glyph reads as must cost
+    the deck nothing; charging it a G8 would leave the real G8 looking like a
+    duplicate and sink every otherwise legal reading."""
+    view = screen(AMBIGUOUS)
+    flower = view.index_of("flower")
+    stray = parse_card("G8")
+    view.reads[flower] = FakeRead(
+        card=stray,
+        where="flower",
+        guess=FakeGuess(ranking=((stray, 0.91),), sure=True),
+        resolvable=False,
+    )
+
+    resolution = resolve(view.skeleton, view.reads)
+    assert resolution.state == AMBIGUOUS
+
+
+def test_uniqueness_within_a_narrow_shortlist_is_not_taken_for_certainty():
+    """Both slots rank the other's card first and their own fifth. Inside a
+    four-card shortlist the swapped reading is the only legal one -- unique,
+    and wrong. Being alone in a shortlist that cannot see the truth is not
+    evidence of anything, so the answer comes from a wider one, where both
+    readings survive and the disagreement becomes a question."""
+    padding = ["B8", "B9", "G1"]
+    view = screen(
+        AMBIGUOUS,
+        unsure={
+            "1.3": ["G8", *padding, "G3"],  # really G3, ranked fifth
+            "2.3": ["G3", *padding, "G8"],  # really G8, ranked fifth
+        },
+    )
+    resolution = resolve(view.skeleton, view.reads)
+
+    assert not resolution.certain, "the swapped reading was taken as settled"
+    assert set(resolution.open) == {view.index_of("1.3"), view.index_of("2.3")}
+
+    # And the true board is among what it is offering, so one answer gets there.
+    asked = resolution.next_question()
+    answered = resolve(
+        view.skeleton,
+        view.reads,
+        {asked: AMBIGUOUS.columns[int(view.reads[asked].where[0]) - 1][2]},
+        level=resolution.level,
+    )
+    assert answered.state == AMBIGUOUS
