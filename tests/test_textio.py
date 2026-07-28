@@ -1,8 +1,14 @@
 import pytest
 
-from shenzhen.cards import RED, locked_cell, make_card, make_dragon
+from shenzhen.cards import BLACK, RED, locked_cell, make_card, make_dragon
 from shenzhen.game import InvalidBoard, Move, deal
-from shenzhen.notation import board_to_text, describe_move, render_board
+from shenzhen.notation import (
+    board_to_text,
+    describe_deck_problem,
+    describe_move,
+    mark_code_legend,
+    render_board,
+)
 from shenzhen.textio import parse_board
 
 # A real shuffle of the 40-card deck: eight columns of five.
@@ -103,6 +109,45 @@ def test_render_board_mentions_every_column():
     text = render_board(deal(0), "ru")
     for index in range(1, 9):
         assert f"{index}:" in text
+
+
+def test_a_deck_complaint_names_the_cards_as_they_are_drawn():
+    """The message exists to send someone back to the screen to find the card
+    that came out wrong, and on the screen the suit is a colour.  ``B4`` makes
+    them translate the one thing they are about to go and match."""
+    with pytest.raises(InvalidBoard) as excinfo:
+        parse_board(FRESH_DEAL.replace("B4", "B2"))
+    problem = excinfo.value.deck
+
+    assert problem.missing == ((make_card(BLACK, 4), 1),)
+    assert problem.extra == ((make_card(BLACK, 2), 1),)
+    # the exception's own text stays the typed notation, for the log
+    assert str(excinfo.value) == "missing B4x1; duplicated B2x1"
+
+    assert describe_deck_problem(problem, "ru") == "не хватает ⚫4; лишние ⚫2"
+    assert describe_deck_problem(problem, "en") == "missing ⚫4; duplicated ⚫2"
+
+
+def test_a_deck_complaint_counts_only_when_the_count_says_something():
+    """Every card exists once in the deck, so ``×1`` is on almost every line
+    and says nothing on any of them.  Two of a card is worth saying."""
+    with pytest.raises(InvalidBoard) as excinfo:
+        parse_board(FRESH_DEAL.replace("G1", "DR").replace("R6", "DR"))
+    text = describe_deck_problem(excinfo.value.deck, "en")
+
+    assert "🟥×2" in text          # two extra red dragons
+    assert "🟢1" in text and "🟢1×" not in text
+    assert "×1" not in text
+
+
+def test_the_legend_pairs_the_marks_with_the_typed_codes():
+    """Said only where a message uses both notations at once -- the complaint
+    in marks, the reading it came from in the notation you edit and send
+    back."""
+    legend = mark_code_legend()
+    assert "🟢 = G" in legend
+    assert "⬜ = DB" in legend
+    assert "🌸 = F" in legend
 
 
 def test_move_descriptions_name_the_cards():

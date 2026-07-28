@@ -156,7 +156,12 @@ foundations: 3 0 1
   table, so there is no need to say.
 
 Anything that could not have come from a real deck is rejected with the
-specific problem — `missing R4x1; duplicated DGx1` — rather than a shrug.
+specific problem — `не хватает 🔴4; лишние 🟩` — rather than a shrug. The
+cards are named the way they are drawn rather than the way they are typed,
+because that message sends you back to the screen to find the one that is
+wrong, and on the screen a suit is a colour and not a letter. Where the
+complaint sits next to a reading in the typed notation, the two are lined up
+for you: `Обозначения: 🟢 = G, 🔴 = R, ⚫ = B, …`.
 
 ## Reading screenshots
 

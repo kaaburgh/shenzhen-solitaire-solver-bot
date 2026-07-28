@@ -16,7 +16,7 @@ from .cards import (
     rank_of,
     suit_of,
 )
-from .game import Move, State
+from .game import DeckMismatch, Move, State
 from .solver import Step
 
 LANGS = ("ru", "en")
@@ -41,6 +41,8 @@ _WORDS = {
         "auto": "авто",
         "yes": "да",
         "no": "нет",
+        "deck_missing": "не хватает",
+        "deck_extra": "лишние",
     },
     "en": {
         "cells": "Cells",
@@ -55,6 +57,8 @@ _WORDS = {
         "auto": "auto",
         "yes": "yes",
         "no": "no",
+        "deck_missing": "missing",
+        "deck_extra": "duplicated",
     },
 }
 
@@ -101,6 +105,44 @@ def cell_mark(value: int | None) -> str:
     if is_locked(value):
         return LOCKED_MARK + DRAGON_MARKS[locked_colour(value)]
     return card_mark(value)
+
+
+def mark_code_legend() -> str:
+    """``🟢 = G, 🔴 = R, …`` -- the two notations against each other.
+
+    Needed only where a message says cards both ways at once: the complaint
+    about a reading is in marks, because it sends you to the screen, while the
+    reading itself is in the typed notation, because it is meant to be edited
+    and sent back.  Built from the tables so the two cannot drift apart.
+    """
+    pairs = [f"{mark} = {letter}" for mark, letter in zip(SUIT_MARKS, SUIT_LETTERS)]
+    pairs += [f"{mark} = D{letter}" for mark, letter in zip(DRAGON_MARKS, SUIT_LETTERS)]
+    pairs.append(f"{FLOWER_MARK} = F")
+    return ", ".join(pairs)
+
+
+def _mark_run(cards: Sequence[tuple[int, int]]) -> str:
+    """Cards and how many of each, as marks: ``⚫4``, or ``⚫4×2`` when the
+    count is worth saying.  Saying ``×1`` of a card that exists once in the
+    deck is noise on every line of the commonest case."""
+    return ", ".join(
+        card_mark(card) + (f"×{count}" if count > 1 else "") for card, count in cards
+    )
+
+
+def describe_deck_problem(deck: DeckMismatch, lang: str = DEFAULT_LANG) -> str:
+    """Why a position is not a deck, in colours rather than letter codes.
+
+    This message exists to send someone back to the screen to find the card
+    that was read wrong, and on the screen a suit is a colour -- so ``B4``
+    makes them translate the one thing they are about to go and match.
+    """
+    parts = []
+    if deck.missing:
+        parts.append(f"{_w(lang, 'deck_missing')} {_mark_run(deck.missing)}")
+    if deck.extra:
+        parts.append(f"{_w(lang, 'deck_extra')} {_mark_run(deck.extra)}")
+    return "; ".join(parts)
 
 
 _SLOTS = {

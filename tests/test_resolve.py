@@ -303,6 +303,10 @@ def test_a_board_that_cannot_be_made_legal_is_refused_rather_than_guessed():
     with pytest.raises(Unresolvable) as caught:
         resolve(view.skeleton, view.reads)
     assert card_code(twin) in str(caught.value)
+    # and the cards themselves come with it, not just the sentence about them:
+    # the bot says this one in the user's language and in the card marks.
+    assert caught.value.deck is not None
+    assert (twin, 1) in caught.value.deck.extra
 
 
 def test_a_flooded_search_admits_it_rather_than_claiming_a_settled_card():

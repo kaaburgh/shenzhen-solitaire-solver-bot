@@ -20,8 +20,10 @@ from ..notation import (
     LANGS,
     board_to_text,
     card_mark,
+    describe_deck_problem,
     describe_slot,
     describe_steps,
+    mark_code_legend,
     render_board,
 )
 from ..solver import SolveResult, Status, solve
@@ -83,6 +85,21 @@ def _pre(text: str) -> str:
     return f"<pre>{html.escape(text)}</pre>"
 
 
+def _reason(exc: Exception, lang: str) -> str:
+    """What to put in a message's ``{reason}``.
+
+    A complaint about the deck not adding up names cards, and naming them is
+    the whole message: whoever reads it is about to go and look for that card
+    on the screen, where a suit is a colour and not a letter.  So it is
+    rendered here from the cards themselves rather than taken from the
+    exception's own text, which stays the letter notation for the log.
+    """
+    deck = getattr(exc, "deck", None)
+    if deck is not None:
+        return describe_deck_problem(deck, lang)
+    return str(exc)
+
+
 def _slot(reads: Sequence, index: int, lang: str) -> str:
     """Where read ``index`` sits, said the way someone looking at the screen
     would find it."""
@@ -139,7 +156,12 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     try:
         board = parse_board(text)
     except InvalidBoard as exc:
-        await update.message.reply_text(t(session.lang, "bad_board", reason=str(exc)))
+        lines = [t(session.lang, "bad_board", reason=_reason(exc, session.lang))]
+        if exc.deck is not None:
+            # The cards were just named in marks and the text they came from is
+            # in letters, so the two notations need lining up.
+            lines.append(t(session.lang, "legend_codes", items=mark_code_legend()))
+        await update.message.reply_text("\n".join(lines))
         return
 
     session.pending = None
@@ -220,9 +242,14 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         if draft is None:
             await message.reply_text(t(session.lang, "bad_image", reason=str(exc)))
             return
-        lines = [t(session.lang, "bad_reading", reason=str(exc))]
+        lines = [t(session.lang, "bad_reading", reason=_reason(exc, session.lang))]
         if exc.narrow:
             lines.append(t(session.lang, "bad_reading_narrow", card_w=exc.card_w))
+        if exc.deck is not None:
+            # Right above the reading it decodes: the complaint named cards in
+            # marks, the reading below is in the notation you edit and send
+            # back, and nothing else in the message pairs the two.
+            lines.append(t(session.lang, "legend_codes", items=mark_code_legend()))
         lines.append(_pre(draft))
         await message.reply_text("\n".join(lines), parse_mode=ParseMode.HTML)
         return

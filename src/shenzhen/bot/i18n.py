@@ -63,6 +63,7 @@ STRINGS: dict[str, dict[str, str]] = {
             "🟢 бамбук · 🔴 монеты · ⚫ иероглифы · "
             "🟩 🟥 ⬜ драконы · 🌸 цветок · 🔒 схлопнутые драконы"
         ),
+        "legend_codes": "Обозначения: {items}",
         "uncertain": "Не уверен в этих картах:",
         "warnings": "Замечания: {items}",
         "btn_correct": "✅ Верно, решай",
@@ -209,6 +210,7 @@ STRINGS: dict[str, dict[str, str]] = {
             "🟢 bamboo · 🔴 coins · ⚫ characters · "
             "🟩 🟥 ⬜ dragons · 🌸 flower · 🔒 collapsed dragons"
         ),
+        "legend_codes": "Codes: {items}",
         "uncertain": "Not sure about these:",
         "warnings": "Notes: {items}",
         "btn_correct": "✅ Right, solve it",
