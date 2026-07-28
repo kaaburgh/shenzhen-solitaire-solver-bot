@@ -137,6 +137,28 @@ async def _cut_crops(data: bytes, result, indices: Sequence[int]) -> dict[int, b
     )
 
 
+def _is_photo(message) -> bool:
+    """Was this message sent as a picture with a caption?
+
+    Telegram changes a caption and a body of text through different methods
+    and rejects the wrong one outright, so any edit of a message the bot may
+    have sent either way has to ask first.
+    """
+    return bool(getattr(message, "photo", None))
+
+
+async def _replace(query, text: str, *, reply_markup=None) -> None:
+    """Put ``text`` in place of whatever the pressed button was attached to."""
+    if _is_photo(query.message):
+        await query.edit_message_caption(
+            caption=text, parse_mode=ParseMode.HTML, reply_markup=reply_markup
+        )
+        return
+    await query.edit_message_text(
+        text, parse_mode=ParseMode.HTML, reply_markup=reply_markup
+    )
+
+
 async def _send(message, text: str, *, photo: bytes | None = None, reply_markup=None):
     """Say ``text``, with a picture above it where there is one to show."""
     if photo is not None:
@@ -389,7 +411,29 @@ def _for_current_interview(session: Session, raw_token: str) -> bool:
     return session.pending is not None and session.pending.token == int(raw_token)
 
 
-async def _ask(message, session: Session, *, intro: bool = False, edit=None) -> None:
+def _for_live_question(session: Session, raw_token: str, raw_index: str) -> bool:
+    """Is this button the one the bot is waiting on right now?
+
+    Two ways it can fail to be.  It can belong to an earlier screenshot, where
+    its read index means a different card entirely; or it can belong to an
+    earlier question of this same interview, since a question carrying a crop
+    is a new message rather than an edit and leaves the keyboard before it
+    standing.  Both name a slot the interview has moved past, and neither
+    "answer it" nor "widen it" means anything there.
+    """
+    return (
+        _for_current_interview(session, raw_token)
+        and session.pending.asked == int(raw_index)
+    )
+
+
+def _stale(session: Session, raw_token: str) -> str:
+    """Why a button did not do anything -- which of the two ways it was old."""
+    key = "ask_superseded" if _for_current_interview(session, raw_token) else "ask_expired"
+    return t(session.lang, key)
+
+
+async def _ask(message, session: Session, *, intro: bool = False, query=None) -> None:
     """Put the next open card to the user, as buttons and a picture of the slot.
 
     One question at a time on purpose.  Each answer is fed back through the
@@ -397,10 +441,13 @@ async def _ask(message, session: Session, *, intro: bool = False, edit=None) -> 
     others by elimination -- which is the difference between confirming one
     card and confirming five.
 
-    A question with a crop beside it has to be a new message rather than an
-    edit of the last one, since a text message cannot grow a photo.  That
-    leaves the previous keyboard live in the chat, which is what
-    :attr:`Pending.asked` is for.
+    The next question replaces the one just answered only when both are plain
+    text.  A question that has a crop cannot be an edit of anything, since a
+    message cannot grow a photo; and a question that has none must not be
+    edited over one that did, or the picture of the card already dealt with
+    would be left standing above a question about a different slot.  Either
+    way it becomes a new message, which leaves the previous keyboard live in
+    the chat -- and that is what :attr:`Pending.asked` is for.
     """
     pending = session.pending
     resolution = pending.resolution
@@ -432,8 +479,10 @@ async def _ask(message, session: Session, *, intro: bool = False, edit=None) -> 
 
     crop = pending.crops.get(index)
     text = "\n".join(lines)
-    if crop is None and edit is not None:
-        await edit(text, parse_mode=ParseMode.HTML, reply_markup=keyboard)
+    if crop is None and query is not None and not _is_photo(query.message):
+        await query.edit_message_text(
+            text, parse_mode=ParseMode.HTML, reply_markup=keyboard
+        )
         return
     await _send(message, text, photo=crop, reply_markup=keyboard)
 
@@ -460,7 +509,7 @@ async def _answer_question(
     pending.resolution = resolution
 
     if resolution.open and resolution.interviewable:
-        await _ask(session=session, message=query.message, edit=query.edit_message_text)
+        await _ask(session=session, message=query.message, query=query)
         return
 
     session.pending = None
@@ -501,9 +550,10 @@ async def _offer_everything(query, session: Session, index: int) -> None:
         _option_rows(pending.token, index, options)
         + [[InlineKeyboardButton(t(session.lang, "btn_type"), callback_data="fix")]]
     )
-    await query.edit_message_text(
-        "\n".join(lines), parse_mode=ParseMode.HTML, reply_markup=keyboard
-    )
+    # In place, so the crop of the slot stays above the wider list -- this is
+    # the same question, and it is the one question where seeing the card
+    # matters most, since the shortlist has just been said not to contain it.
+    await _replace(query, "\n".join(lines), reply_markup=keyboard)
 
 
 def _hold(session: Session, board: State) -> None:
@@ -630,15 +680,8 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     if data.startswith("pick:"):
         await query.answer()
         _, raw_token, raw_index, raw_card = data.split(":", 3)
-        if not _for_current_interview(session, raw_token):
-            await query.message.reply_text(t(session.lang, "ask_expired"))
-            return
-        if session.pending.asked != int(raw_index):
-            # A question that came with a picture is a message of its own, so
-            # the keyboard of the question before it is still sitting in the
-            # chat.  Answering that one would pin a card the interview has
-            # already moved past.
-            await query.message.reply_text(t(session.lang, "ask_superseded"))
+        if not _for_live_question(session, raw_token, raw_index):
+            await query.message.reply_text(_stale(session, raw_token))
             return
         await _answer_question(query, context, session, int(raw_index), int(raw_card))
         return
@@ -646,8 +689,8 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     if data.startswith("wide:"):
         await query.answer()
         _, raw_token, raw_index = data.split(":", 2)
-        if not _for_current_interview(session, raw_token):
-            await query.message.reply_text(t(session.lang, "ask_expired"))
+        if not _for_live_question(session, raw_token, raw_index):
+            await query.message.reply_text(_stale(session, raw_token))
             return
         await _offer_everything(query, session, int(raw_index))
         return

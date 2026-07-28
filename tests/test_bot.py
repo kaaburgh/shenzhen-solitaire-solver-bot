@@ -101,12 +101,22 @@ class FakeQuery:
         self.data = data
         self.message = message
         self.answered = False
+        #: which edit method the handler reached for, so the tests can catch
+        #: the one Telegram would have rejected
+        self.edited_as: str | None = None
 
     async def answer(self, *args, **kwargs):
         self.answered = True
 
     async def edit_message_text(self, text, **kwargs):
+        assert not self.message.photo, "Telegram rejects editMessageText on a photo"
+        self.edited_as = "text"
         self.message.log.append((text, kwargs))
+
+    async def edit_message_caption(self, caption=None, **kwargs):
+        assert self.message.photo, "a caption belongs to a photo"
+        self.edited_as = "caption"
+        self.message.log.append((caption or "", kwargs))
 
 
 class FakeUpdate:
@@ -155,9 +165,15 @@ async def send_text(context, body: str, log: list):
     await handlers.handle_text(FakeUpdate(message=message), context)
 
 
-async def press(context, data: str, log: list):
-    query = FakeQuery(data, FakeMessage(FakeChat(), log=log))
+async def press(context, data: str, log: list, on_photo: bool = False):
+    """Press a button. ``on_photo`` when the keyboard is under a crop, which is
+    what a question about a card the bot could show a picture of looks like."""
+    message = FakeMessage(FakeChat(), log=log)
+    if on_photo:
+        message.photo = [object()]
+    query = FakeQuery(data, message)
     await handlers.on_callback(FakeUpdate(query=query), context)
+    return query
 
 
 async def send_file(context, document, log: list):
@@ -584,6 +600,88 @@ async def test_none_of_these_widens_the_choice_instead_of_dead_ending(context, m
     widened = [b for b in buttons(log) if b.startswith("pick:")]
 
     assert set(offered) < set(widened), (offered, widened)
+
+
+@pytest.mark.asyncio
+async def test_widening_a_question_that_came_as_a_picture_edits_its_caption(
+    context, monkeypatch
+):
+    """Telegram changes a caption and a body of text through different methods
+    and rejects the wrong one outright. Reaching for `editMessageText` here
+    would strand exactly the user whose card is missing from the shortlist --
+    the only user who presses this button."""
+    view, recognition = _screenshot({
+        "5.1": ["B3", "B4", "B5", "B6", "B8", "B9", "G1", "G2", "B7"],
+        "5.2": ["B4", "B3"],
+        "5.5": ["B7", "B3"],
+    })
+    log: list = []
+    await send_photo(
+        context, log, recognition, monkeypatch, crops={view.index_of("5.1"): b"crop"}
+    )
+    assert log[-1][1].get("photo") == b"crop"    # the question came as a picture
+
+    wide = next(b for b in buttons(log) if b.startswith("wide:"))
+    query = await press(context, wide, log, on_photo=True)
+
+    # In place, so the crop stays above the wider list rather than scrolling
+    # away from the question it belongs to.
+    assert query.edited_as == "caption"
+    assert any(b.startswith("pick:") for b in buttons(log))
+
+
+@pytest.mark.asyncio
+async def test_a_question_without_a_crop_is_not_edited_over_one_that_had_one(
+    context, monkeypatch
+):
+    """Editing text into a photo message is rejected by Telegram outright, and
+    editing its caption would be worse than the error: the picture of the slot
+    just dealt with would stay put above a question about a different one."""
+    view, recognition = _screenshot({
+        "5.1": ["B3", "B4"],
+        "5.2": ["B4", "B3"],
+        "6.3": ["DG", "DR"],
+        "7.2": ["DR", "DG"],
+    })
+    log: list = []
+    crops = {u.index: b"crop" for u in recognition.resolution.unknowns}
+    await send_photo(context, log, recognition, monkeypatch, crops=crops)
+
+    session = context.application.bot_data["sessions"].get(1)
+    assert log[-1][1].get("photo") == b"crop"
+    session.pending.crops = {}                   # nothing to show for the next one
+
+    answer = next(b for b in buttons(log) if b.startswith("pick:"))
+    query = await press(context, answer, log, on_photo=True)
+
+    assert query.edited_as is None, "edited the message the crop was attached to"
+    assert "что там?" in log[-1][0], log[-1]      # asked again, as a new message
+    assert log[-1][1].get("photo") is None
+
+
+@pytest.mark.asyncio
+async def test_a_stale_other_button_is_turned_away_like_a_stale_answer(
+    context, monkeypatch
+):
+    """"Other…" from a superseded question widens a slot the interview has
+    already moved past, and hands back a keyboard of answers that would then
+    be refused one by one."""
+    view, recognition = _screenshot({
+        "5.1": ["B3", "B4"],
+        "5.2": ["B4", "B3"],
+        "6.3": ["DG", "DR"],
+        "7.2": ["DR", "DG"],
+    })
+    log: list = []
+    await send_photo(context, log, recognition, monkeypatch)
+
+    session = context.application.bot_data["sessions"].get(1)
+    stale = next(b for b in buttons(log) if b.startswith("wide:"))
+    session.pending.asked = None  # as if the interview had moved on
+
+    await press(context, stale, log)
+
+    assert "не жду ответа" in texts(log)
 
 
 @pytest.mark.asyncio
