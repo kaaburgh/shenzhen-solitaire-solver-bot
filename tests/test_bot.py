@@ -155,9 +155,13 @@ def context():
     )
 
 
+def plain(text: str) -> str:
+    """A message without the markup Telegram would have rendered away."""
+    return text.replace("<pre>", "").replace("</pre>", "")
+
+
 def texts(log) -> str:
-    body = "\n".join(text for text, _ in log)
-    return body.replace("<pre>", "").replace("</pre>", "")
+    return plain("\n".join(text for text, _ in log))
 
 
 async def send_text(context, body: str, log: list):
@@ -215,6 +219,83 @@ async def test_the_next_button_continues_the_same_solution(context):
     assert "6." in texts(log)
     session = context.application.bot_data["sessions"].get(1)
     assert session.shown == 10
+
+
+@pytest.mark.asyncio
+async def test_the_verdict_says_what_the_moves_are_for(context):
+    """A hard position's difficulty is not which moves are legal, so the answer
+    leads with the goals rather than with move one of thirty-four."""
+    log: list = []
+    await send_text(context, SOLVABLE, log)
+    await press(context, "solve", log)
+
+    verdict = plain(log[-2][0])
+    assert "Замысел" in verdict
+    assert "ходы 1–" in verdict, verdict
+    # every line of it points at the moves that reach its goal
+    spans = [line for line in verdict.splitlines() if line.startswith(("ходы ", "ход "))]
+    assert len(spans) == len(context.application.bot_data["sessions"].get(1).plan)
+
+
+@pytest.mark.asyncio
+async def test_each_batch_of_moves_says_which_goal_it_serves(context):
+    """The batches are read one at a time, minutes apart, so a batch that only
+    numbers its moves has lost the reason for them."""
+    log: list = []
+    await send_text(context, SOLVABLE, log)
+    await press(context, "solve", log)
+    first = plain(log[-1][0])
+    await press(context, "more", log)
+    second = plain(log[-1][0])
+
+    for batch in (first, second):
+        assert batch.splitlines()[1].startswith("▸"), batch
+
+
+@pytest.mark.asyncio
+async def test_a_line_that_fits_in_one_message_is_left_to_speak_for_itself(context):
+    """A plan above five visible moves is the same thing said twice.
+
+    This endgame is three dragon collapses, so it has three goals and still
+    needs no plan: they are written over the moves themselves, and the moves are
+    all on screen at once.
+    """
+    log: list = []
+    await send_text(
+        context,
+        """
+        free: . . .
+        flower: 1
+        foundations: 9 9 9
+        1: DB DG
+        2: DB DG
+        3: DB DG
+        4: DB DG
+        5: DR
+        6: DR
+        7: DR
+        8: DR
+        """,
+        log,
+    )
+    await press(context, "solve", log)
+
+    assert len(context.application.bot_data["sessions"].get(1).plan) == 3
+    body = texts(log)
+    assert "Решение есть" in body
+    assert "Замысел" not in body
+    assert "▸" in body  # the goals are over the moves instead
+
+
+@pytest.mark.asyncio
+async def test_a_new_position_drops_the_previous_plan(context):
+    log: list = []
+    await send_text(context, SOLVABLE, log)
+    await press(context, "solve", log)
+    assert context.application.bot_data["sessions"].get(1).plan
+
+    await send_text(context, board_to_text(deal(3)), log)
+    assert context.application.bot_data["sessions"].get(1).plan == []
 
 
 @pytest.mark.asyncio

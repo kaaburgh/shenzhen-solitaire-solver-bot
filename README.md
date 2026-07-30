@@ -1,16 +1,26 @@
 # shenzhen-solitaire-solver-bot
 
 Telegram bot for the solitaire minigame in SHENZHEN I/O. Send it the board;
-it tells you whether the deal can still be won and, if so, the next five
-moves.
+it tells you whether the deal can still be won and, if so, what the plan is
+and the next five moves.
 
 ```
-✅ Решение есть — 24 хода до победы.
-1. кол. 7 → в свободную ячейку: DR
-2. Схлопнуть зелёных драконов
-3. кол. 6 → кол. 4: G7  [авто: R2]
+✅ Решение есть — 34 хода до победы.
+
+Замысел — за чем идти и в каком порядке:
+ходы 1–10: убрать 🟩 драконов — они в колонках 1, 6, 7. По пути: 🟢 до 2, 🔴 до 3
+ходы 11–26: увести 🔴 в сбор до 8. По пути: ⚫ до 6
+ход 27: убрать 🟥 драконов — они в колонках 1, 5, 8
+ходы 28–32: освободить колонку 7. По пути: ⚫ до 9
+ходы 33–34: убрать ⬜ драконов — они в колонках 4, 5, 6. По пути: 🟢 до 9
+
+Ближайшие ходы:
+▸ убрать 🟩 драконов
+1. кол. 3 → кол. 8: R6
+2. кол. 7 → в свободную ячейку: DR
+3. кол. 7 → кол. 4: B8  [авто: B2]
 4. кол. 2 → в фундамент: B3
-5. кол. 1 → кол. 5: R4 (B3 G2)
+5. кол. 1 → в свободную ячейку: DG
 ```
 
 Answers in Russian or English (`/lang`).
@@ -372,6 +382,41 @@ Three outcomes, kept distinct because the difference matters:
 On 200 random deals: 198 solved, 1 proven unsolvable, 1 over budget; median
 under half a second, worst case about two seconds.
 
+## The plan
+
+Thirty-four numbered moves answer a question the player usually already knows
+the answer to. Which moves are *legal* is on the screen; what is not on the
+screen is which way to set off — dig the ace out from under four cards, go and
+collapse the green dragons, or run the blacks up to 5 first to unload the table
+so a column can be emptied at all. Get that choice wrong and the next ten moves
+are wasted. So the verdict leads with the goals — the block at the top of this
+file is one in full, on deal 0.
+
+Each line names the moves it covers, so the plan and the numbered list are one
+document, and every batch of moves carries its goal at the head — the batches
+are read one at a time, minutes apart, and a batch that only numbers its moves
+has lost the reason for them.
+
+The line is cut at the things a later move cannot take back: a dragon colour
+collapsed, a suit's 1 out from under the pile, more columns empty than at any
+earlier point. Those cannot be reordered, so the moves between two of them are
+exactly what the second one cost. Foundations creeping up and columns that
+empty and refill — a median of 15 emptyings per solution, half of them filled
+again within three moves — ride inside a phase instead of delimiting one. Each
+goal is stated with the bit of the board that makes it checkable, read off the
+position **as the phase begins** rather than as it will be when the goal lands:
+naming the columns the dragons sit in at the moment they collapse is just as
+true and no use at all, because that board is ten moves away.
+
+The phases are read off the line the solver already found. Making the *search*
+prefer lines that fall into clean chains was tried and dropped: a solved line
+can be reordered exactly — swap two adjacent moves when both orders are legal
+and land on the identical position, and everything downstream is untouched — but
+over 20 deals and 95 landmarks it pulled landmarks earlier by 0.15 moves each,
+made 3 of the 20 lines worse, and cost more than the search itself. A
+near-minimal line is already dependency-tight. Details, and what the plan does
+not do, in [docs/plan.md](docs/plan.md).
+
 ## Development
 
 ```sh
@@ -383,10 +428,17 @@ CI runs the suite on Python 3.11, 3.12 and 3.13, lints with ruff, and builds
 the image — then checks the built image can actually solve a deal and load its
 template bank, rather than only that the build exited zero.
 
-135 tests, about 20 seconds. They cover the rules (runs, dragons, autocollect,
+350 tests, about 40 seconds. They cover the rules (runs, dragons, autocollect,
 deck validation), the solver — including replaying every move of a returned
 solution against a fresh board to check it really wins — the text format, and
 the conversation flow against stand-ins for Telegram's objects.
+
+The plan has no ground truth to check against — there is no fact of the matter
+about which goal a player would have named — so `tests/test_plan.py` checks the
+weaker thing, that every claim it makes is one the position supports: the
+phases partition the moves with no gap or overlap, each phase reaches the goal
+it claims at the move it claims, and each piece of evidence is re-derived from
+the position it is stated about.
 
 The deck resolver is tested on made-up reads rather than screenshots
 (`tests/test_resolve.py`): saying "this slot scored G3 first and G8 second"
