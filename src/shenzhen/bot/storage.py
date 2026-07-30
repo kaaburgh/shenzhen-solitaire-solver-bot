@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 
 from ..game import State
 from ..notation import DEFAULT_LANG  # noqa: F401  (re-exported as the fallback)
+from ..plan import Phase
 from ..solver import SolveResult
 from ..vision.resolve import Resolution, Skeleton
 
@@ -57,6 +58,8 @@ class Session:
     lang: str = DEFAULT_LANG
     board: State | None = None
     result: SolveResult | None = None
+    #: the solution's goals, so every batch of moves can say what it is for
+    plan: list[Phase] = field(default_factory=list)
     #: how many moves of the solution have already been shown
     shown: int = 0
     busy: bool = False

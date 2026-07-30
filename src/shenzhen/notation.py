@@ -13,10 +13,12 @@ from .cards import (
     is_flower,
     is_locked,
     locked_colour,
+    make_card,
     rank_of,
     suit_of,
 )
 from .game import DeckMismatch, Move, State
+from .plan import Goal, GoalKind, Phase, phase_of
 from .solver import Step
 
 LANGS = ("ru", "en")
@@ -43,6 +45,27 @@ _WORDS = {
         "no": "нет",
         "deck_missing": "не хватает",
         "deck_extra": "лишние",
+        "plan_span": "ходы {a}–{b}",
+        "plan_one": "ход {a}",
+        "plan_also": "По пути",
+        "goal_dragons": "убрать {colour} драконов",
+        "goal_dragons_in": "убрать {colour} драконов — они в колонках {columns}",
+        "goal_dragons_in_one": "убрать {colour} драконов — они в колонке {columns}",
+        "goal_ace": "достать {card}",
+        "goal_ace_buried": "достать {card} — колонка {column}, под ней {cards}",
+        "goal_column": "освободить колонку {column}",
+        "goal_column_lands": "освободить колонку {column} — под {card}",
+        "goal_collect": "увести {suit} в сбор до {rank}",
+        "goal_collect_short": "{suit} до {rank}",
+        "goal_finish": "добрать остаток",
+        "also_dragons": "{colour} драконы",
+        "also_finish": "остальное уходит в сбор",
+        "cards_one": "{n} карта",
+        "cards_few": "{n} карты",
+        "cards_many": "{n} карт",
+        "moves_one": "{n} ход",
+        "moves_few": "{n} хода",
+        "moves_many": "{n} ходов",
     },
     "en": {
         "cells": "Cells",
@@ -59,6 +82,27 @@ _WORDS = {
         "no": "no",
         "deck_missing": "missing",
         "deck_extra": "duplicated",
+        "plan_span": "moves {a}–{b}",
+        "plan_one": "move {a}",
+        "plan_also": "On the way",
+        "goal_dragons": "clear the {colour} dragons",
+        "goal_dragons_in": "clear the {colour} dragons — they are in columns {columns}",
+        "goal_dragons_in_one": "clear the {colour} dragons — they are in column {columns}",
+        "goal_ace": "dig out {card}",
+        "goal_ace_buried": "dig out {card} — column {column}, {cards} below it",
+        "goal_column": "empty column {column}",
+        "goal_column_lands": "empty column {column} — for {card}",
+        "goal_collect": "run {suit} up to {rank}",
+        "goal_collect_short": "{suit} up to {rank}",
+        "goal_finish": "collect what is left",
+        "also_dragons": "the {colour} dragons",
+        "also_finish": "the rest goes up",
+        "cards_one": "{n} card",
+        "cards_few": "{n} cards",
+        "cards_many": "{n} cards",
+        "moves_one": "{n} move",
+        "moves_few": "{n} moves",
+        "moves_many": "{n} moves",
     },
 }
 
@@ -273,10 +317,127 @@ def describe_move(move: Move, state: State, lang: str = DEFAULT_LANG) -> str:
     return str(move)  # pragma: no cover
 
 
-def describe_steps(steps: Sequence[Step], lang: str = DEFAULT_LANG, start: int = 1) -> str:
-    """Number a run of moves, noting what the game picked up after each one."""
+# --- the plan --------------------------------------------------------------
+#
+# The moves say what to do; the plan says what for.  Both are needed, and they
+# are deliberately written in different registers so that neither can be
+# mistaken for the other: a move line is an instruction resolved against one
+# position ("кол. 7 → в свободную ячейку: DR"), a plan line is a span of moves
+# and the goal they add up to ("ходы 1–10: убрать 🟩 драконов").
+
+#: marks a goal where it heads a run of moves
+GOAL_MARK = "▸"
+
+
+def _counted(n: int, lang: str, thing: str) -> str:
+    """``3 карты``, ``34 хода`` -- Russian agrees the noun with the number, and
+    picks a different form for one, for two to four, and for the rest.  English
+    only needs the first of those, and says so by giving the same word twice."""
+    if n % 100 in (11, 12, 13, 14):
+        form = "many"
+    elif n % 10 == 1:
+        form = "one"
+    elif n % 10 in (2, 3, 4):
+        form = "few"
+    else:
+        form = "many"
+    return _w(lang, f"{thing}_{form}").format(n=n)
+
+
+def describe_moves(n: int, lang: str = DEFAULT_LANG) -> str:
+    """A number of moves, as a phrase that can be dropped into a sentence."""
+    return _counted(n, lang, "moves")
+
+
+def describe_goal(goal: Goal, lang: str = DEFAULT_LANG, *, detail: bool = True) -> str:
+    """One goal in words.
+
+    ``detail`` carries the evidence that makes the goal concrete -- which
+    columns the dragons are sitting on, how deep the ace is.  It belongs in the
+    plan, where the point is to judge the goal before playing anything, and is
+    dropped where the goal is only a heading over the moves that reach it.
+    """
+    if goal.kind is GoalKind.DRAGONS:
+        colour = DRAGON_MARKS[goal.suit]
+        if detail and goal.columns:
+            key = "goal_dragons_in_one" if len(goal.columns) == 1 else "goal_dragons_in"
+            columns = ", ".join(str(c + 1) for c in goal.columns)
+            return _w(lang, key).format(colour=colour, columns=columns)
+        return _w(lang, "goal_dragons").format(colour=colour)
+
+    if goal.kind is GoalKind.ACE:
+        card = card_mark(make_card(goal.suit, 1))
+        if detail and goal.column is not None and goal.buried:
+            return _w(lang, "goal_ace_buried").format(
+                card=card, column=goal.column + 1, cards=_counted(goal.buried, lang, "cards")
+            )
+        return _w(lang, "goal_ace").format(card=card)
+
+    if goal.kind is GoalKind.COLUMN:
+        if detail and goal.lands is not None:
+            return _w(lang, "goal_column_lands").format(
+                column=goal.column + 1, card=card_mark(goal.lands)
+            )
+        return _w(lang, "goal_column").format(column=goal.column + 1)
+
+    if goal.kind is GoalKind.COLLECT:
+        key = "goal_collect" if detail else "goal_collect_short"
+        return _w(lang, key).format(suit=SUIT_MARKS[goal.suit], rank=goal.rank)
+
+    return _w(lang, "goal_finish")
+
+
+def describe_also(goal: Goal, lang: str = DEFAULT_LANG) -> str:
+    """A goal as something a phase passes through rather than aims at."""
+    if goal.kind is GoalKind.DRAGONS:
+        return _w(lang, "also_dragons").format(colour=DRAGON_MARKS[goal.suit])
+    if goal.kind is GoalKind.FINISH:
+        return _w(lang, "also_finish")
+    return describe_goal(goal, lang, detail=False)
+
+
+def describe_plan(phases: Sequence[Phase], lang: str = DEFAULT_LANG) -> str:
+    """The whole line as the handful of goals it is made of, one per line.
+
+    Each line names the moves it covers, so the plan and the numbered move list
+    are one document: "ходы 11–27" is where to look for the moves that get
+    there, and which goal the move you are playing right now belongs to.
+    """
+    lines = []
+    for phase in phases:
+        if phase.length == 1:
+            span = _w(lang, "plan_one").format(a=phase.start + 1)
+        else:
+            span = _w(lang, "plan_span").format(a=phase.start + 1, b=phase.end + 1)
+
+        text = f"{span}: {describe_goal(phase.goal, lang)}"
+        if phase.also:
+            extras = ", ".join(describe_also(g, lang) for g in phase.also)
+            text += f". {_w(lang, 'plan_also')}: {extras}"
+        lines.append(text)
+    return "\n".join(lines)
+
+
+def describe_steps(
+    steps: Sequence[Step],
+    lang: str = DEFAULT_LANG,
+    start: int = 1,
+    *,
+    phases: Sequence[Phase] = (),
+) -> str:
+    """Number a run of moves, noting what the game picked up after each one.
+
+    With ``phases``, the goal each run of moves is working towards heads it --
+    at every phase boundary and at the top of the batch, so that a batch read
+    on its own still says what it is for.
+    """
     lines = []
     for offset, step in enumerate(steps):
+        index = start - 1 + offset
+        phase = phase_of(phases, index)
+        if phase is not None and (offset == 0 or phase.start == index):
+            lines.append(f"{GOAL_MARK} {describe_goal(phase.goal, lang, detail=False)}")
+
         text = describe_move(step.move, step.state_before, lang)
         if step.collected:
             picked = ", ".join(card_code(c) for c in step.collected)

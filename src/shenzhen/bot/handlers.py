@@ -21,11 +21,14 @@ from ..notation import (
     board_to_text,
     card_mark,
     describe_deck_problem,
+    describe_moves,
+    describe_plan,
     describe_slot,
     describe_steps,
     mark_code_legend,
     render_board,
 )
+from ..plan import plan
 from ..solver import SolveResult, Status, solve
 from ..textio import parse_board
 from ..vision import LayoutError, RecognitionError, TemplateBank, load_image, recognize
@@ -587,6 +590,7 @@ def _hold(session: Session, board: State) -> None:
     """Take ``board`` as the position, dropping whatever was solved before."""
     session.board = board
     session.result = None
+    session.plan = []
     session.shown = 0
     session.unconfirmed = False
 
@@ -811,6 +815,7 @@ async def _solve_and_reply(message, context: ContextTypes.DEFAULT_TYPE, session:
         session.busy = False
 
     session.result = result
+    session.plan = plan(result.steps)
     session.shown = 0
 
     # A verdict on a reading nobody confirmed carries the way back to it --
@@ -828,9 +833,21 @@ async def _solve_and_reply(message, context: ContextTypes.DEFAULT_TYPE, session:
         )
         return
 
-    await notice.edit_text(
-        t(session.lang, "solved", total=len(result.steps)), reply_markup=hatch
+    # The verdict carries the shape of the line, not just its length.  Which
+    # moves are legal is the easy half of a hard position; which way to set off
+    # -- dragons, or the ace, or unloading the table first -- is the half a
+    # numbered list of thirty moves does not answer.
+    #
+    # Not when the whole line arrives in one message, though: the goals are over
+    # each run of moves already, and a plan above five visible moves is the same
+    # thing said twice.
+    verdict = t(
+        session.lang, "solved", total=describe_moves(len(result.steps), session.lang)
     )
+    if len(session.plan) > 1 and len(result.steps) > MOVES_PER_MESSAGE:
+        goals = _pre(describe_plan(session.plan, session.lang))
+        verdict += f"\n\n{t(session.lang, 'plan_head')}\n{goals}"
+    await notice.edit_text(verdict, parse_mode=ParseMode.HTML, reply_markup=hatch)
     await _send_moves(message, session)
 
 
@@ -843,11 +860,17 @@ async def _send_moves(message, session: Session) -> None:
     steps = result.steps[session.shown : session.shown + MOVES_PER_MESSAGE]
     if not steps:
         await message.reply_text(
-            t(session.lang, "no_more_moves", total=len(result.steps))
+            t(
+                session.lang,
+                "no_more_moves",
+                total=describe_moves(len(result.steps), session.lang),
+            )
         )
         return
 
-    text = describe_steps(steps, session.lang, start=session.shown + 1)
+    text = describe_steps(
+        steps, session.lang, start=session.shown + 1, phases=session.plan
+    )
     session.shown += len(steps)
 
     keyboard = None

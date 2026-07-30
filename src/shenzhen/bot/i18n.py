@@ -8,8 +8,8 @@ STRINGS: dict[str, dict[str, str]] = {
     "ru": {
         "start": (
             "Привет! Я решаю пасьянс Shenzhen Solitaire из SHENZHEN I/O.\n\n"
-            "Пришли скриншот расклада — отвечу, есть ли ещё решение, и покажу "
-            "ближайшие 5 ходов.\n\n"
+            "Пришли скриншот расклада — отвечу, есть ли ещё решение, покажу "
+            "замысел (за чем идти и в каком порядке) и ближайшие 5 ходов.\n\n"
             "Расклад можно прислать и текстом: /help расскажет формат.\n"
             "Язык ответов: /lang"
         ),
@@ -86,7 +86,8 @@ STRINGS: dict[str, dict[str, str]] = {
             "Пришли расклад текстом — я возьму его вместо распознанного.\n"
             "Вот распознанное, поправь и отправь обратно:"
         ),
-        "solved": "✅ Решение есть — {total} ходов до победы.",
+        "solved": "✅ Решение есть — {total} до победы.",
+        "plan_head": "<b>Замысел</b> — за чем идти и в каком порядке:",
         "solved_head": "Ближайшие ходы:",
         "unsolvable": (
             "❌ Решения нет. Я перебрал все достижимые позиции — из этого "
@@ -98,7 +99,7 @@ STRINGS: dict[str, dict[str, str]] = {
             "расклад просто оказался тяжёлым."
         ),
         "already_won": "Тут уже всё собрано — партия выиграна.",
-        "no_more_moves": "Ходы закончились: это все {total} ходов до победы.",
+        "no_more_moves": "Ходы закончились: это все {total} до победы.",
         "bad_board": "Так не бывает: {reason}",
         "bad_image": (
             "Не получилось разобрать картинку: {reason}\n\n"
@@ -140,7 +141,8 @@ STRINGS: dict[str, dict[str, str]] = {
         "start": (
             "Hi! I solve the Shenzhen Solitaire minigame from SHENZHEN I/O.\n\n"
             "Send me a screenshot of the board and I will tell you whether it "
-            "is still winnable and show the next 5 moves.\n\n"
+            "is still winnable, what the plan is — what to go for, and in what "
+            "order — and the next 5 moves.\n\n"
             "You can also type the position out: see /help.\n"
             "Language: /lang"
         ),
@@ -217,7 +219,8 @@ STRINGS: dict[str, dict[str, str]] = {
             "Type the position out and I will use that instead.\n"
             "Here is what I read — edit it and send it back:"
         ),
-        "solved": "✅ Winnable — {total} moves to go.",
+        "solved": "✅ Winnable — {total} to go.",
+        "plan_head": "<b>The idea</b> — what to go for, and in what order:",
         "solved_head": "Next moves:",
         "unsolvable": (
             "❌ Not winnable. I searched every position reachable from here and "
@@ -229,7 +232,7 @@ STRINGS: dict[str, dict[str, str]] = {
             "is just a hard one."
         ),
         "already_won": "Everything is collected already — this game is won.",
-        "no_more_moves": "That was all of them: {total} moves to the win.",
+        "no_more_moves": "That was all of them: {total} to the win.",
         "bad_board": "That position cannot occur: {reason}",
         "bad_image": (
             "I could not read the picture: {reason}\n\n"
