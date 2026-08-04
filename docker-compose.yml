@@ -9,8 +9,6 @@ services:
     env_file: .env
     environment:
       SHENZHEN_TEMPLATES: /app/templates/default
-      SHENZHEN_MAX_NODES: "400000"
-      SHENZHEN_TIME_LIMIT: "20"
       SHENZHEN_WORKERS: "2"
       LOG_LEVEL: INFO
       # Uncomment to measure which code real conversations actually reach, then
