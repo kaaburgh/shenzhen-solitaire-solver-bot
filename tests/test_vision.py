@@ -561,3 +561,88 @@ def test_a_box_off_the_edge_of_the_picture_costs_the_question_nothing():
     image = np.zeros((40, 40, 3), dtype=np.uint8)
     assert card_crop(image, Box(500, 500, 10, 10), 10) is None
     assert card_crop(image, Box(0, 0, 10, 10), 0) is None
+
+
+# --- the benchmark ---------------------------------------------------------
+
+
+@pytest.mark.skipif(not BANK_PATH.is_dir(), reason="no template bank installed")
+def test_the_benchmark_scores_the_fixtures_it_is_pointed_at(capsys):
+    """The tuning tool, kept honest by the suite.
+
+    It is only ever run by hand, which is exactly how a tool rots: nobody
+    notices it stopped importing until the afternoon they need it. Reading the
+    fixtures as they came off the device is the one run whose answer is known
+    -- every card right, no board wrong -- so it doubles as a check that the
+    scoring itself is not lying."""
+    from shenzhen.vision import benchmark
+
+    assert benchmark.main(["--fixtures", str(FIXTURES), "--bank", str(BANK_PATH), "--width", "0"]) == 0
+
+    printed = capsys.readouterr().out
+    assert "confident-wrong 0" in printed, printed
+    assert f"boards {len(FIXTURE_CASES)}/{len(FIXTURE_CASES)}" in printed, printed
+
+
+@pytest.mark.skipif(not BANK_PATH.is_dir(), reason="no template bank installed")
+def test_the_benchmark_leaves_a_picture_telegram_has_already_squeezed_alone(monkeypatch):
+    """A .jpg fixture came back out of Telegram. Squeezing it a second time
+    would measure a picture nobody will ever send, and would quietly make the
+    hardest fixtures in the set harder than reality every time the benchmark
+    is run."""
+    from shenzhen.vision import benchmark
+
+    cases = benchmark.fixtures(FIXTURES)
+    pngs = [path for _n, path, _e in cases if path.suffix == ".png"]
+    assert len(pngs) < len(cases), "the point of this test is that a .jpg fixture exists"
+
+    squeezed = []
+    original = benchmark.as_telegram_photo
+    monkeypatch.setattr(
+        benchmark,
+        "as_telegram_photo",
+        lambda image, width, quality: (
+            squeezed.append(width) or original(image, width, quality)
+        ),
+    )
+
+    score = benchmark.run(
+        FIXTURES, TemplateBank.load(BANK_PATH), width=1280, quality=80, verbose=False
+    )
+
+    assert len(squeezed) == len(pngs), "a .jpg fixture was recompressed"
+    assert score.boards_total == len(cases)
+
+
+@pytest.mark.skipif(not BANK_PATH.is_dir(), reason="no template bank installed")
+def test_a_fixture_the_layout_cannot_read_is_scored_not_raised(tmp_path):
+    """A geometry change that makes a fixture unreadable is exactly when the
+    comparison against the previous run is worth having, so it must not be the
+    thing that stops the run from printing one.
+
+    And the board's own cards count against the score even though none of them
+    was read. Scoring what came back instead would mean the worse the geometry
+    got the better the number looked -- a fixture that produced no reads at all
+    would come out at a clean 100%."""
+    from shenzhen.vision import benchmark
+
+    labels = (FIXTURES / "iphone" / "shot1.txt").read_text(encoding="utf-8")
+    unreadable = tmp_path / "junk"
+    unreadable.mkdir()
+    cv2.imwrite(str(unreadable / "shot1.png"), np.zeros((400, 900, 3), dtype=np.uint8))
+    (unreadable / "shot1.txt").write_text(labels, encoding="utf-8")
+
+    score = benchmark.Score()
+    outcome = benchmark.score_one(
+        cv2.imread(str(unreadable / "shot1.png")),
+        TemplateBank.load(BANK_PATH),
+        labels,
+        score,
+        verbose=False,
+    )
+
+    assert "NO LAYOUT" in outcome, outcome
+    assert score.boards_total == 1 and score.boards_right == 0
+    assert score.cards_right == 0
+    assert score.cards_total == len(benchmark.expected_cards(labels))
+    assert score.cards_total > 30, "the whole board should be counted against it"
