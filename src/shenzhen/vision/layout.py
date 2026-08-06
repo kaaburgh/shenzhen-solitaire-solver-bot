@@ -40,6 +40,12 @@ import numpy as np
 NUM_COLUMNS = 8
 NUM_FREE_CELLS = 3
 
+#: how much of a card's width its rounded corner eats into, as a fraction of
+#: that width.  Only the top edge matters here: a scan looking for where a
+#: column ends has to start below the corner, or the first row -- which covers
+#: well under half the width -- ends the column before it begins.
+CORNER_RADIUS = 0.05
+
 #: grid slot the dragon buttons sit in
 BUTTON_SLOT = 3
 #: grid slot the flower sits in
@@ -80,6 +86,15 @@ class LayoutConfig:
 
     #: components smaller than this fraction of the frame are noise
     min_area_ratio: float = 0.0004
+    #: how far a blob's width may stray from the measured card width and still
+    #: count as a card.  Every card in the game is drawn at exactly one width,
+    #: so this is tolerance for the mask's edges rather than for the artwork,
+    #: and it does not need to be large: across the fixtures, at every squeeze
+    #: from untouched down to 950px, real card blobs measure 0.964-1.016 of
+    #: the card width.  What the slack is *for* is the other side -- a blob
+    #: fused with something the phone drew over the board is wider than a
+    #: card, and the wider this is, the more of those get taken for columns.
+    card_width_slack: float = 0.08
     #: a full card is this tall relative to its width
     card_aspect: float = 1.91
     #: horizontal distance between two grid slots
@@ -104,6 +119,16 @@ class LayoutConfig:
     #: how much of a column's width an erased overlay has to span before the
     #: pieces either side of it count as one column
     overlay_cover: float = 0.50
+
+    # -- a column the components lost --------------------------------------
+    #: how much of a tableau slot's area has to read as card before the slot
+    #: is taken to hold a column the component pass failed to deliver, rather
+    #: than to be empty.  The game draws nothing at all in an empty column --
+    #: no outline, no placeholder, only felt -- so this is the only thing that
+    #: tells "empty" from "lost".  Measured over the fixtures: genuinely empty
+    #: slots cover 0.00-0.27 of the area and occupied ones 0.44 upwards, so
+    #: anywhere in between does, and the midpoint is as good as any.
+    column_presence: float = 0.35
 
     # -- splitting a column into cards -------------------------------------
     #: ignore this much of a column's width at each side when profiling
@@ -466,7 +491,8 @@ def detect_layout(image: np.ndarray, config: LayoutConfig | None = None) -> Boar
             raise LayoutError("no card-like shapes found; is this a screenshot of the board?")
         card_w = _estimate_card_width(boxes)
 
-    boxes = [b for b in boxes if 0.85 * card_w <= b.w <= 1.15 * card_w]
+    slack = config.card_width_slack
+    boxes = [b for b in boxes if (1 - slack) * card_w <= b.w <= (1 + slack) * card_w]
     boxes = join_fragments(boxes, overlay, card_w, config)
     if not boxes:
         raise LayoutError("nothing card-shaped found; is this a screenshot of the board?")
@@ -493,15 +519,111 @@ def detect_layout(image: np.ndarray, config: LayoutConfig | None = None) -> Boar
     offset = _estimate_offset(gray, tableau_boxes, card_w, config)
     layout.offset = offset
 
+    found: dict[int, Box] = {}
     for blob in tableau_boxes:
         slot = _slot_of(blob.x, origin, pitch)
         if not 0 <= slot < NUM_COLUMNS:
             warnings.append(f"a column at x={blob.x} falls outside the board; ignored")
             continue
+        found.setdefault(slot, blob)
         layout.columns[slot].extend(_split_column(gray, blob, offset, config))
+
+    # A slot the components missed is either an empty column or a lost one,
+    # and the grid is what tells them apart.  Done after the found columns
+    # because it is calibrated against them: they give both the y every column
+    # starts at and the x slot 0 would sit at.
+    base = column_base(found, pitch)
+    if base is not None:
+        top = min(b.y for b in found.values())
+        for slot in range(NUM_COLUMNS):
+            if layout.columns[slot]:
+                continue
+            recovered = column_at(mask, slot, base, pitch, top, layout, config)
+            if recovered is None:
+                continue
+            layout.columns[slot].extend(_split_column(gray, recovered, offset, config))
+            warnings.append(
+                f"column {slot + 1} was read off the board's grid; something was "
+                f"drawn across it"
+            )
 
     _assign_top_row(image, top_boxes, origin, pitch, layout, config)
     return layout
+
+
+def column_base(boxes: dict[int, Box], pitch: float) -> float | None:
+    """Where slot 0's column starts, calibrated against the ones that were found.
+
+    Not from ``origin``.  That is backed out of the dragon buttons through
+    ``button_offset``, which is a rough figure -- it only ever has to land
+    within half a pitch, because all it feeds is :func:`_slot_of`, which
+    rounds.  Measured against real screenshots it sits about half a card left
+    of where the columns actually are, and a crop taken there straddles the
+    gap and catches two columns at 60% each.
+
+    So anything that needs a real coordinate rather than a slot number has to
+    get it from a column that was genuinely found.  Every column shares one
+    pitch, so each of them says where slot 0 would be, and the median of that
+    is steadier than any single one.
+    """
+    if not boxes:
+        return None
+    return float(np.median([box.x - slot * pitch for slot, box in boxes.items()]))
+
+
+def column_at(
+    mask: np.ndarray, slot: int, base: float, pitch: float, top: int, layout: BoardLayout,
+    config: LayoutConfig,
+) -> Box | None:
+    """The column standing in ``slot``, read off the grid rather than found.
+
+    Every column is drawn at the same place: the eight slots are one pitch
+    apart, and all of them start at the same y whatever they hold.  So a slot
+    that no connected component landed in is not necessarily empty -- it may
+    be a column the component pass lost, which is what happens when something
+    the phone drew over the board fuses with it and the pair is thrown out as
+    not card-shaped.  That costs six cards at once, and a missing column is
+    the one error the deck cannot repair.
+
+    The grid says where to look; the mask says whether anything is there.  An
+    empty column in this game is bare felt -- the game draws no outline and no
+    placeholder for one, unlike the free cells along the top -- so "mostly
+    card" and "mostly felt" is the whole of the distinction, and the two are
+    far apart enough to call.
+
+    Comes back as a blob for :func:`_split_column` to cut up exactly as if it
+    had been found the ordinary way, which is what keeps this a fallback
+    rather than a second implementation.
+    """
+    height, width = mask.shape[:2]
+    x0 = int(round(base + slot * pitch))
+    x1 = x0 + layout.card_w
+    y1 = top + layout.card_h
+    if x0 < 0 or y1 > height or x1 > width or top < 0:
+        return None
+
+    column = mask[top:y1, x0:x1]
+    if float(column.mean()) / 255 < config.column_presence:
+        return None
+
+    # How far down the cards actually run.  A column is one unbroken run of
+    # card from the top of the tableau, so the first row that is mostly felt
+    # ends it -- and stopping there rather than at a fixed depth is what lets
+    # the splitter find the bottom card's own edge.
+    #
+    # The scan starts below the top edge because cards have rounded corners:
+    # the first row or two of one covers well under half its width, and a scan
+    # that began there would call the column finished before it started.
+    rows = mask[top:, x0:x1].mean(axis=1) / 255
+    corner = max(1, round(CORNER_RADIUS * layout.card_w))
+    bottom = len(rows)
+    for index in range(corner, len(rows)):
+        if rows[index] < 0.5:
+            bottom = index
+            break
+    if bottom < layout.card_h:
+        return None
+    return Box(x0, top, layout.card_w, bottom)
 
 
 def _split_rows(boxes: list[Box], min_gap: float) -> tuple[list[Box], list[Box]]:
