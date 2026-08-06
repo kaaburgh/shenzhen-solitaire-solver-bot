@@ -123,12 +123,21 @@ class LayoutConfig:
     # -- a column the components lost --------------------------------------
     #: how much of a tableau slot's area has to read as card before the slot
     #: is taken to hold a column the component pass failed to deliver, rather
-    #: than to be empty.  The game draws nothing at all in an empty column --
-    #: no outline, no placeholder, only felt -- so this is the only thing that
-    #: tells "empty" from "lost".  Measured over the fixtures: genuinely empty
-    #: slots cover 0.00-0.27 of the area and occupied ones 0.44 upwards, so
-    #: anywhere in between does, and the midpoint is as good as any.
+    #: than to be empty.  Weight of card alone, which is all this one needs:
+    #: an empty slot carries a mark of its own, but that mark is nowhere near
+    #: card-coloured, so it counts as nothing here.  Measured over the fixtures
+    #: once the slot is cropped where the columns actually are: a genuinely
+    #: empty slot covers 0.000 and an occupied one 0.90 upwards, so anywhere
+    #: between them does.  See :data:`slot_mark_range` for telling an empty
+    #: slot from one that is covered up.
     column_presence: float = 0.35
+    #: how bright an empty slot's mark is against the felt beside it, as a
+    #: range.  An empty tableau slot is not bare felt -- the game marks it with
+    #: a card-sized patch of lighter check -- and that patch measures 1.10-1.19
+    #: times the felt's brightness across the fixtures, against 2.87-3.42 for a
+    #: slot holding cards and 1.0 for bare felt.  Wide enough either side to
+    #: hold every mark seen and still exclude both neighbours by a mile.
+    slot_mark_range: tuple[float, float] = (1.05, 1.8)
 
     # -- splitting a column into cards -------------------------------------
     #: ignore this much of a column's width at each side when profiling
@@ -535,17 +544,28 @@ def detect_layout(image: np.ndarray, config: LayoutConfig | None = None) -> Boar
     base = column_base(found, pitch)
     if base is not None:
         top = min(b.y for b in found.values())
+        felt = felt_level(image, base, pitch, top, layout)
         for slot in range(NUM_COLUMNS):
             if layout.columns[slot]:
                 continue
             recovered = column_at(mask, slot, base, pitch, top, layout, config)
-            if recovered is None:
-                continue
-            layout.columns[slot].extend(_split_column(gray, recovered, offset, config))
-            warnings.append(
-                f"column {slot + 1} was read off the board's grid; something was "
-                f"drawn across it"
-            )
+            if recovered is not None:
+                layout.columns[slot].extend(_split_column(gray, recovered, offset, config))
+                warnings.append(
+                    f"column {slot + 1} was read off the board's grid; something was "
+                    f"drawn across it"
+                )
+            elif felt is not None and not slot_is_marked(
+                image, slot, base, pitch, top, felt, layout, config
+            ):
+                # Neither cards nor the mark the game leaves on an emptied
+                # column, so this slot is covered by something rather than
+                # empty.  Saying so beats reporting an empty column and
+                # letting the deck fail five cards later.
+                warnings.append(
+                    f"column {slot + 1} is hidden behind something; it reads as "
+                    f"neither cards nor an empty slot"
+                )
 
     _assign_top_row(image, top_boxes, origin, pitch, layout, config)
     return layout
@@ -569,6 +589,77 @@ def column_base(boxes: dict[int, Box], pitch: float) -> float | None:
     if not boxes:
         return None
     return float(np.median([box.x - slot * pitch for slot, box in boxes.items()]))
+
+
+def _brightness(image: np.ndarray, x0: int, y0: int, x1: int, y1: int) -> float | None:
+    """Mean value of a rectangle, or ``None`` unless all of it is on the picture.
+
+    All of it, not the part that happens to be in frame.  Everything reading a
+    slot compares it against what a whole slot looks like, so measuring the
+    fragment of one that survived a crop answers a different question and
+    answers it confidently: half a card of cards reads as bright as a whole
+    one, which is not the mark, which is "something is covering this column".
+    A slot running off the edge of the picture is a slot nobody can say
+    anything about.
+    """
+    height, width = image.shape[:2]
+    if x0 < 0 or y0 < 0 or x1 > width or y1 > height:
+        return None
+    if x1 - x0 < 2 or y1 - y0 < 2:
+        return None
+    region = image[y0:y1, x0:x1]
+    return float(cv2.cvtColor(region, cv2.COLOR_BGR2HSV)[:, :, 2].mean())
+
+
+def felt_level(
+    image: np.ndarray, base: float, pitch: float, top: int, layout: BoardLayout
+) -> float | None:
+    """How bright the felt is, measured in the gaps between the tableau slots.
+
+    A reference rather than a constant: the felt is drawn at whatever
+    brightness the device and the compression leave it at, and everything that
+    reads the board against it wants the ratio, not the level.  Taken from the
+    gaps because they are the one part of the tableau row guaranteed to be
+    felt on every board -- a slot may hold cards or an empty-slot mark, but
+    the strip between two slots is bare whatever is going on.
+    """
+    strips = []
+    inset = max(2, layout.card_w // 30)
+    for slot in range(NUM_COLUMNS - 1):
+        x0 = int(round(base + slot * pitch)) + layout.card_w + inset
+        x1 = int(round(base + (slot + 1) * pitch)) - inset
+        level = _brightness(image, x0, top, x1, top + layout.card_h)
+        if level is not None:
+            strips.append(level)
+    return float(np.median(strips)) if strips else None
+
+
+def slot_is_marked(
+    image: np.ndarray, slot: int, base: float, pitch: float, top: int,
+    felt: float, layout: BoardLayout, config: LayoutConfig,
+) -> bool:
+    """Does this slot show the mark the game leaves on an emptied column?
+
+    An empty tableau slot is *not* bare felt.  The game draws a card-sized
+    patch of lighter check there, which is what makes "this column is empty" a
+    thing the picture says rather than a thing inferred from the absence of
+    anything else.  So a slot that holds neither cards nor this mark is a slot
+    something is covering, and that is worth saying out loud instead of
+    reporting an empty column and letting the deck fail six cards later.
+
+    Read as a ratio against the felt beside it, since the absolute level
+    depends on the device and on what the compression did to it.
+    """
+    margin = max(3, layout.card_w // 10)
+    x0 = int(round(base + slot * pitch))
+    level = _brightness(
+        image, x0 + margin, top + margin,
+        x0 + layout.card_w - margin, top + layout.card_h - margin,
+    )
+    if level is None or felt <= 0:
+        return True  # off the edge of the picture; not ours to complain about
+    low, high = config.slot_mark_range
+    return low <= level / felt <= high
 
 
 def column_at(

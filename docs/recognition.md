@@ -188,27 +188,65 @@ against a column that was genuinely found — `column_base` does that, taking
 the median of `box.x - slot * pitch` over the columns the components did
 deliver.
 
-### An empty column and a lost column look identical
+### An empty column is drawn, and that is worth reading
 
-The game draws **nothing** for an empty tableau column. No outline, no
-placeholder, no slot marker — bare felt, the same felt as anywhere else on the
-board. (The three free cells along the top *do* get dashed outlines. The
-tableau does not.) So there is no artwork to recognise, and "column 4 is
-empty" and "column 4 was lost" are the same picture as far as the mask is
-concerned.
+An earlier version of this file claimed the game draws **nothing** for an
+empty tableau column. That is wrong, and it was wrong in a way that cost the
+reader a capability, so it is worth being precise about what is actually
+there.
 
-What does separate them is how much of the slot reads as card at all:
+The game marks an emptied column with a **card-sized patch of lighter green
+check** — the same footprint a card would have, filled with a checker of the
+felt and a green about 40% brighter. It does not read as a card face (it stays
+far too saturated: the card mask covers 0.000 of it) which is why it is easy
+to mistake for bare felt when you are looking at a mask rather than at the
+picture.
+
+Measured against the felt in the gaps beside it, which is the only reference
+that survives a change of device or compression:
+
+| | brightness relative to the felt beside it |
+| --- | --- |
+| bare felt | 1.0 |
+| an empty slot's mark | 1.10–1.19 |
+| a slot holding cards | 2.87–3.42 |
+
+`slot_mark_range` is (1.05, 1.8) — wide enough for every mark seen, and
+nowhere near either neighbour.
+
+That gives three states rather than two, which is the point:
+
+* **cards** — the column is there.
+* **the mark** — the column is genuinely empty, and the picture *says so*
+  rather than the reader inferring it from having found nothing.
+* **neither** — something is covering the slot. Before the mark was read this
+  came out as "empty column", the deck then failed five or six cards later,
+  and nothing in the reply pointed at the column. Now it is a warning naming
+  the column.
+
+Separately, by weight of card alone:
 
 | | coverage of the slot's card-height area |
 | --- | --- |
-| genuinely empty | 0.00–0.27 |
-| holding cards | 0.44 upwards |
+| genuinely empty | 0.000 |
+| holding cards | 0.90 upwards |
 
-so `column_presence` sits at 0.35, between two clusters that are nowhere near
-each other. `column_at` uses it as the fallback behind the overlay cut-out:
-a slot no component landed in is checked against the grid, and if it is mostly
-card rather than mostly felt, the column is rebuilt from its known position
-and split exactly as if it had been found the ordinary way.
+so `column_presence` at 0.35 sits between two clusters that are nowhere near
+each other. `column_at` uses it as the fallback behind the overlay cut-out: a
+slot no component landed in is checked against the grid, and if it is mostly
+card, the column is rebuilt from its known position and split exactly as if it
+had been found the ordinary way.
+
+Note those coverage figures are not the ones this file first carried
+(0.00–0.27 against 0.44). Those were taken with a crop placed at `origin`,
+which is half a card out — see above — so they were measuring two half
+columns. Wrong geometry flatters a threshold: it moves both clusters towards
+each other and makes the gap look tighter than it is.
+
+**`tests/fake_board.py` draws the mark too**, and did not until this was
+found. A synthetic renderer that leaves it out is unfaithful in exactly the
+respect anything telling "empty" from "hidden" has to get right, and every
+synthetic board with an empty column would have looked hidden.
 
 Two mechanisms, deliberately independent — the overlay cut-out and this — and
 either alone reads the screenshot that prompted them. Getting the fallback

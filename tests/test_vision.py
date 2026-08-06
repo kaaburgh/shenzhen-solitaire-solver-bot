@@ -784,3 +784,81 @@ def test_the_grid_origin_is_a_slot_number_not_a_coordinate():
     assert base is not None
     for slot, box in found.items():
         assert abs((base + slot * pitch) - box.x) <= 0.1 * layout.card_w
+
+
+def test_an_empty_slot_is_something_the_game_draws_not_an_absence():
+    """The game marks an emptied column with a card-sized patch of lighter
+    check.  That is what makes "this column is empty" a thing the picture
+    says, rather than a thing inferred from finding nothing -- and it is the
+    only reason a column hidden behind something can be told from one that is
+    genuinely empty.
+
+    Pinned against the felt beside it because the level itself depends on the
+    device and on what the compression left: measured on real screenshots the
+    mark runs 1.10-1.19 times the felt, a slot with cards 2.87-3.42."""
+    from shenzhen.vision.layout import column_base, felt_level
+
+    base_state = raw_deal(13)
+    columns = list(base_state.columns)
+    spare = columns[3]
+    columns[3] = ()
+    columns[6] = columns[6] + spare
+    state = State(
+        columns=tuple(columns), free=(None, None, None), foundations=(0, 0, 0), flower=False
+    )
+    image = render(state)
+    layout = detect_layout(image, CONFIG)
+    assert not layout.columns[3], "column 4 is the empty one here"
+
+    found = {slot: boxes[0] for slot, boxes in enumerate(layout.columns) if boxes}
+    pitch = CONFIG.slot_pitch * layout.card_w
+    grid = column_base(found, pitch)
+    top = min(b.y for b in found.values())
+    felt = felt_level(image, grid, pitch, top, layout)
+
+    x = int(round(grid + 3 * pitch))
+    mark = image[top + 20 : top + layout.card_h - 20, x + 20 : x + layout.card_w - 20]
+    level = cv2.cvtColor(mark, cv2.COLOR_BGR2HSV)[:, :, 2].mean()
+
+    low, high = CONFIG.slot_mark_range
+    assert low <= level / felt <= high, level / felt
+    assert level / felt > 1.02, "an empty slot is not bare felt"
+
+
+def test_a_column_hidden_behind_something_is_not_reported_as_empty():
+    """The third case, and the reason the mark is worth reading. A slot that
+    shows neither cards nor the mark is covered by something -- and saying so
+    beats reporting an empty column and letting the deck fail five cards
+    later, which is what the reader did before it could tell the two apart."""
+    state = auto_resolve(raw_deal(3))[0]
+    image = render(state)
+
+    # Something opaque over the whole of column 4, down to the bottom of its
+    # deepest card, and felt-coloured so that it is not mistaken for a card
+    # either.
+    x = slot_x(3)
+    deep = TABLEAU_Y + (len(state.columns[3]) - 1) * OFFSET + CARD_H
+    cv2.rectangle(image, (x - 4, TABLEAU_Y - 4), (x + CARD_W + 4, deep + 4), (40, 55, 30), -1)
+
+    layout = detect_layout(image, CONFIG)
+    assert not layout.columns[3]
+    assert any("column 4" in w and "hidden" in w for w in layout.warnings), layout.warnings
+
+
+def test_a_slot_running_off_the_edge_is_not_called_hidden():
+    """A screenshot cropped through a column leaves half a slot in frame, and
+    half a slot of cards is as bright as a whole one -- so measuring the
+    fragment says "not the empty-slot mark", which is the same answer as
+    "something is covering this column". It is not: nobody can say anything
+    about a slot that runs off the picture.
+
+    Everything reading a slot compares it against what a *whole* slot looks
+    like, so the measurement has to decline rather than answer from whatever
+    survived the crop."""
+    state = auto_resolve(raw_deal(3))[0]
+    image = render(state)
+
+    for cut, name in ((slot_x(7) + CARD_W // 2, "column 8"), (slot_x(0) + CARD_W // 2, "column 1")):
+        cropped = image[:, :cut] if name == "column 8" else image[:, cut:]
+        layout = detect_layout(cropped, CONFIG)
+        assert not any("hidden" in w for w in layout.warnings), (name, layout.warnings)
