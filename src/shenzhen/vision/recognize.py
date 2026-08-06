@@ -36,16 +36,12 @@ MIN_RELIABLE_CARD_WIDTH = 150
 # The width below which the size of the picture is worth *mentioning* to
 # whoever sent it. A different question from the one above, and a much lower
 # answer: 150px is where enlarging stops being needed, and this is where
-# enlarging stops being enough. Measured the same way, on the same fixtures,
-# but with the whole pipeline in place -- the enlargement, and the deck check
-# that proves the shaky reads -- which is what the person on the other end
-# actually gets:
-#
-#     card width   readings the deck threw out
-#     >= 100px           1 in 120
-#     80-99px            1 in 17
-#     70-79px            1 in 7
-#     < 70px             3 in 5
+# enlarging stops being enough. Measured with the whole pipeline in place --
+# the enlargement, and the deck check that proves the shaky reads -- which is
+# what the person on the other end actually gets. Readings the deck throws out
+# are absent at >=100px, rare in the eighties and common below seventy; the
+# banded figures are in docs/recognition.md, which is the one place they live
+# so that two copies cannot disagree.
 #
 # Sending a screenshot as a file instead of as a photo is real advice, and at
 # 97px it is the wrong advice: at that width a reading that fails has almost

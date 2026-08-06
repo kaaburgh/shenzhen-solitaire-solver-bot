@@ -312,10 +312,10 @@ certainly failed at something else:
 
 | card width in the picture | readings the deck threw out |
 | --- | --- |
-| ≥100px | 1 in 120 |
-| 80–99px (a phone screenshot sent as a photo) | 1 in 17 |
-| 70–79px | 1 in 7 |
-| <70px | 3 in 5 |
+| ≥100px | none (0/239) |
+| 80–99px (a phone screenshot sent as a photo) | 1 in 22 |
+| 70–79px | 1 in 11 |
+| <70px | 1 in 2 |
 
 Measured on the same fixtures, but with the whole pipeline in place —
 enlargement, and the deck settling the shaky reads — which is what the person
