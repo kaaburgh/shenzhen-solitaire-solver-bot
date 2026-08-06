@@ -30,6 +30,22 @@ Do not rewrite the notes into a summary of the current code. They are a record
 of *why* the code is what it is, and the parts about approaches that are no
 longer in the tree are the most valuable parts.
 
+### One shape of bug to check for by name
+
+`docs/recognition.md` has a section called *The mistake this code keeps
+making*. Read it — it is the only entry there about the code rather than about
+the artwork, and it has caught this repo twice in consecutive changes.
+
+The short version: **a function that takes a geometric region and returns a
+bare number is suspect.** Ask what it does when the region is partly off the
+picture, or is not where the caller thinks it is. Clamping to the frame, or
+measuring whatever is reachable, produces a plausible number about the wrong
+pixels — and the plausible number is worse than a crash, because the next
+step is usually to calibrate a threshold with it.
+
+Go through `layout.region`, which returns `None` instead of clamping, rather
+than slicing an array directly.
+
 ### Measure with the benchmark, not by eye
 
 ```

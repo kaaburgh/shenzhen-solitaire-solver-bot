@@ -862,3 +862,48 @@ def test_a_slot_running_off_the_edge_is_not_called_hidden():
         cropped = image[:, :cut] if name == "column 8" else image[:, cut:]
         layout = detect_layout(cropped, CONFIG)
         assert not any("hidden" in w for w in layout.warnings), (name, layout.warnings)
+
+
+# --- the class of bug behind two of the fixes above ------------------------
+
+
+@pytest.mark.skipif(not BANK_PATH.is_dir(), reason="no template bank installed")
+@pytest.mark.parametrize("edge", ["left", "right", "top", "bottom"])
+def test_a_cropped_screenshot_is_never_read_confidently_and_wrong(edge):
+    """The failure this guards is not "forgot a bounds check". It is a
+    measurement that answers about the wrong region instead of declining,
+    with an answer in the plausible range.
+
+    Both of the bugs it comes from looked like a threshold wanting tuning, not
+    like a missing check: `origin` used as a coordinate cropped half a card
+    off and returned a believable coverage; `_brightness` clamped an off-frame
+    slot and returned a believable brightness. Cropping is the cheapest way to
+    manufacture partial regions all over the board at once.
+
+    A crop may fail, and it may read correctly, and it may come back wrong
+    while saying so. What it must not do is hand back a board the bot would
+    present as read with cards in it that are not on the screen."""
+    bank = TemplateBank.load(BANK_PATH)
+    photo = cv2.imread(str(FIXTURES / "telegram" / "shot1.jpg"))
+    expected = parse_board((FIXTURES / "telegram" / "shot1.txt").read_text())
+    height, width = photo.shape[:2]
+
+    for fraction in (0.04, 0.10, 0.20):
+        cut_x, cut_y = int(width * fraction), int(height * fraction)
+        cropped = {
+            "left": photo[:, cut_x:],
+            "right": photo[:, : width - cut_x],
+            "top": photo[cut_y:, :],
+            "bottom": photo[: height - cut_y, :],
+        }[edge]
+
+        try:
+            result = recognize(cropped, bank)
+        except (RecognitionError, LayoutError):
+            continue  # refusing is always allowed
+        if result.state == expected:
+            continue  # so is getting it right anyway
+        assert result.warnings or result.uncertain, (
+            f"{edge} {fraction:.0%}: a board that is not the one on screen, "
+            f"presented with nothing flagged"
+        )

@@ -591,24 +591,42 @@ def column_base(boxes: dict[int, Box], pitch: float) -> float | None:
     return float(np.median([box.x - slot * pitch for slot, box in boxes.items()]))
 
 
-def _brightness(image: np.ndarray, x0: int, y0: int, x1: int, y1: int) -> float | None:
-    """Mean value of a rectangle, or ``None`` unless all of it is on the picture.
+def region(
+    image: np.ndarray, x0: int, y0: int, x1: int, y1: int
+) -> np.ndarray | None:
+    """A rectangle of ``image``, or ``None`` unless all of it is on the picture.
 
-    All of it, not the part that happens to be in frame.  Everything reading a
-    slot compares it against what a whole slot looks like, so measuring the
-    fragment of one that survived a crop answers a different question and
-    answers it confidently: half a card of cards reads as bright as a whole
-    one, which is not the mark, which is "something is covering this column".
-    A slot running off the edge of the picture is a slot nobody can say
-    anything about.
+    The one way to turn a piece of the board into pixels, and it declines
+    rather than clamps.  That is the whole point of it existing.
+
+    Every measurement here compares a region against what a *whole* region of
+    its kind looks like -- this much of a slot is card, this bright against
+    the felt, this glyph against the templates.  Hand any of them the fragment
+    that survived a crop and they do not fail: they answer, in the plausible
+    range, about a different region.  Half a slot of cards is as bright as a
+    whole one; half a glyph stretched back to the template's shape scores like
+    a glyph.  Both bugs this guards against were of that shape, and neither
+    looked like a missing bounds check at the time -- they looked like a
+    threshold that wanted tuning.
+
+    So: a region that is not wholly on the picture is one nobody can say
+    anything about, and the type says so.  Callers that would rather raise
+    can, but they have to decide that themselves.
     """
     height, width = image.shape[:2]
     if x0 < 0 or y0 < 0 or x1 > width or y1 > height:
         return None
     if x1 - x0 < 2 or y1 - y0 < 2:
         return None
-    region = image[y0:y1, x0:x1]
-    return float(cv2.cvtColor(region, cv2.COLOR_BGR2HSV)[:, :, 2].mean())
+    return image[y0:y1, x0:x1]
+
+
+def _brightness(image: np.ndarray, x0: int, y0: int, x1: int, y1: int) -> float | None:
+    """Mean value of a rectangle, or ``None`` if it is not wholly on the picture."""
+    patch = region(image, x0, y0, x1, y1)
+    if patch is None:
+        return None
+    return float(cv2.cvtColor(patch, cv2.COLOR_BGR2HSV)[:, :, 2].mean())
 
 
 def felt_level(
@@ -788,12 +806,16 @@ def corner_patch(image: np.ndarray, box: Box, card_w: int, config: LayoutConfig)
     y0 = box.y
     y1 = y0 + min(box.h, int(round(config.corner_h * card_w)))
 
-    x0, y0 = max(x0, 0), max(y0, 0)
-    x1 = min(x1, image.shape[1], box.x + box.w)
-    y1 = min(y1, image.shape[0], box.bottom)
-    if x1 <= x0 or y1 <= y0:
-        raise LayoutError(f"card at {box.as_tuple()} is too small to read")
-    return image[y0:y1, x0:x1]
+    # Not clamped to the frame, on purpose.  A crop is only comparable to the
+    # templates if it is the whole strip -- half of one, stretched back to the
+    # template's shape by `standardise`, scores like a glyph rather than like
+    # a failure.  Every box handed here today is inside the picture by
+    # construction, so this never fires; it is here so that the first box
+    # built from the grid rather than found as a component cannot make it.
+    patch = region(image, x0, y0, min(x1, box.x + box.w), min(y1, box.bottom))
+    if patch is None:
+        raise LayoutError(f"card at {box.as_tuple()} is not wholly on the picture")
+    return patch
 
 
 def annotate(image: np.ndarray, layout: BoardLayout) -> np.ndarray:

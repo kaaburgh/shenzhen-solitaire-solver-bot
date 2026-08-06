@@ -334,6 +334,55 @@ does not scale with the card: the game draws the seam the same way at every
 board size. It measures 13-26 grey levels on real screenshots against about 2
 for a glyph, and anything in 4.5-7.5 reads every fixture right.
 
+## The mistake this code keeps making
+
+Twice now, in consecutive changes, and it did not look the same both times —
+which is why it is written down as a shape rather than as two bugs.
+
+**A function answers a question about a region; the region can be invalid; the
+return type has no way to say so.** `float` cannot say "I could not". So the
+code clamps, or takes what it can reach, and returns *a* number — one that
+lands in the plausible range and is about a different region than the caller
+asked for.
+
+* `origin` used as a coordinate rather than a slot number. The crop landed
+  half a card out, straddled the gap, and returned a coverage of 0.236 where
+  the right crop returns 0.000. Nothing failed. That number then went on to
+  **calibrate a threshold**, which is the worst version of this: a wrong
+  measurement quietly setting the constant that decides future readings.
+* `_brightness` clamping an off-frame slot to the frame. Half a slot of cards
+  is as bright as a whole one, so the ratio came back well outside the
+  empty-slot mark's band — and "not the mark" is exactly how the caller spells
+  "something is covering this column". A screenshot cropped through column 8
+  was reported as a column hidden behind something.
+
+Neither read as a missing bounds check at the time. Both read as a threshold
+that wanted tuning, which is the trap: the natural response is to move the
+threshold, and moving it fits the constant to a measurement that was never
+about the right pixels.
+
+What is in place against it:
+
+* **`layout.region` is the only way to turn a piece of the board into
+  pixels**, and it returns `None` rather than clamping. `_brightness` and
+  `corner_patch` both go through it. `corner_patch`'s check cannot fire today
+  — every box reaching it is inside the picture by construction — and it is
+  there for the first box built from the grid instead of found as a component,
+  which is exactly how the last one became reachable.
+* **A crop sweep in the suite.** `test_a_cropped_screenshot_is_never_read_
+  confidently_and_wrong` slices each edge off a fixture at 4%, 10% and 20% and
+  demands the reader either refuse, get it right, or flag something. Cropping
+  is the cheapest way to manufacture partial regions everywhere at once. Over
+  a wider sweep — 12 fixtures, 24 crops each — the count of readings that came
+  back confidently wrong is currently **0** of 288, so this is a regression
+  guard rather than a live hunt.
+
+The property is nearly greppable, and worth applying as a review lens: **a
+function that takes a geometric region and returns a bare number is
+suspect.** Ask what it does when the region is partly off the picture, or is
+not where the caller thinks it is. If the answer is "returns something
+anyway", that is the bug, before any threshold is involved.
+
 ## Dead ends
 
 Written down so they are not walked again. All measured on the fixture set at
