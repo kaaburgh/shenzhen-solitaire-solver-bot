@@ -13,8 +13,10 @@ compared against the run before it rather than against an impression::
 Four figures come out, and they are not interchangeable:
 
 ``cards``
-    Reads matching the known board, before the deck gets a say. The matcher's
-    own score, and the one that moves when a threshold moves.
+    Tableau slots read correctly, before the deck gets a say. The matcher's
+    own score, and the one that moves when a threshold moves. Counted over
+    the slots the board is known to have, so a card the layout never found
+    counts against it rather than quietly leaving the denominator.
 ``boards``
     Fixtures whose final position is exactly right. What the user experiences,
     and much higher than ``cards`` because the deck recovers misreads.
@@ -46,6 +48,7 @@ import numpy as np
 from ..cards import card_code
 from ..textio import parse_board
 from .classify import TemplateBank
+from .layout import LayoutError
 from .recognize import RecognitionError, recognize
 
 FIXTURES = Path("tests/fixtures")
@@ -113,7 +116,13 @@ class Score:
 def score_one(
     image: np.ndarray, bank: TemplateBank, text: str, score: Score, verbose: bool
 ) -> str:
-    """Read one fixture, fold it into ``score``, and describe the outcome."""
+    """Read one fixture, fold it into ``score``, and describe the outcome.
+
+    Every way of failing is scored rather than raised. A layout change that
+    makes a fixture unreadable is exactly when the comparison against the
+    previous run is worth having, so it must not be the thing that stops the
+    run from printing one.
+    """
     truth = expected_cards(text)
     try:
         result = recognize(image, bank)
@@ -125,22 +134,42 @@ def score_one(
     except RecognitionError as exc:
         reads, exact = exc.reads, False
         outcome = f"FAILED: {exc}"
+    except LayoutError as exc:
+        # The geometry pass gave up, so there are no reads at all -- every
+        # card of this board counts against the score below.
+        reads, exact = [], False
+        outcome = f"NO LAYOUT: {exc}"
 
+    # Scored against the slots the board is known to have, not against the
+    # reads that came back. A card the layout dropped is a card the reader got
+    # wrong; leaving it out of the denominator instead would mean the worse
+    # the geometry got, the better `cards` looked -- and a total layout
+    # failure would score a clean 100%.
+    at = {read.where: read for read in reads}
     wrong = []
-    for read in reads:
-        want = truth.get(read.where)
-        if want is None:
-            continue  # a cell, the flower or a foundation; not in the labels
+    for where, want in truth.items():
         score.cards_total += 1
+        read = at.get(where)
+        if read is None:
+            wrong.append(f"{where}:missing!={card_code(want)}")
+            score.misread[f"missing<-{card_code(want)}"] += 1
+            continue
         if want == read.card:
             score.cards_right += 1
         else:
-            wrong.append(f"{read.where}:{card_code(read.card)}!={card_code(want)}")
+            wrong.append(f"{where}:{card_code(read.card)}!={card_code(want)}")
             score.misread[f"{card_code(read.card)}<-{card_code(want)}"] += 1
         if not read.confident:
             score.flagged += 1
         elif want != read.card:
             score.confident_wrong += 1
+
+    # Reads in tableau slots the board does not have -- a column cut into one
+    # card too many. Nothing to score them against, so they are called out
+    # rather than counted.
+    spurious = [w for w in at if w[:1].isdigit() and w not in truth]
+    if spurious:
+        outcome += f"  [+{len(spurious)} slot(s) that do not exist: {' '.join(sorted(spurious))}]"
 
     score.boards_total += 1
     score.boards_right += exact

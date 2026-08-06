@@ -56,8 +56,16 @@ Current baseline, `main`, 31 templates:
   180, 191px cards all produce a spurious seam on some fixture). Sweeping is
   fine for `cards`; for `boards`, measure at widths that actually occur.
 * **`cards` only scores tableau slots** — 39 of 40 — because those are the
-  labels that line up with the text notation without guessing. A layout failure
-  that drops cards entirely will therefore *flatter* `cards`. Watch `boards`.
+  labels that line up with the text notation without guessing. It is counted
+  over the slots the board is *known* to have, not over the reads that came
+  back, so a card the layout never found counts against it. That matters: the
+  obvious way round makes a total layout failure score 100%, and the worse the
+  geometry gets the better the number looks. A fixture whose geometry fails
+  outright reports `NO LAYOUT` and scores zero for that board rather than
+  stopping the run.
+* Reads landing in tableau slots the board does not have — a column cut one
+  card too many — are reported in brackets rather than scored. There is no
+  truth to compare them against, and `boards` already fails.
 
 ## The input
 
