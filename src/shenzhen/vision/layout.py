@@ -592,10 +592,19 @@ def column_base(boxes: dict[int, Box], pitch: float) -> float | None:
 
 
 def _brightness(image: np.ndarray, x0: int, y0: int, x1: int, y1: int) -> float | None:
-    """Mean value of a rectangle, or ``None`` if it is off the picture."""
+    """Mean value of a rectangle, or ``None`` unless all of it is on the picture.
+
+    All of it, not the part that happens to be in frame.  Everything reading a
+    slot compares it against what a whole slot looks like, so measuring the
+    fragment of one that survived a crop answers a different question and
+    answers it confidently: half a card of cards reads as bright as a whole
+    one, which is not the mark, which is "something is covering this column".
+    A slot running off the edge of the picture is a slot nobody can say
+    anything about.
+    """
     height, width = image.shape[:2]
-    x0, y0 = max(x0, 0), max(y0, 0)
-    x1, y1 = min(x1, width), min(y1, height)
+    if x0 < 0 or y0 < 0 or x1 > width or y1 > height:
+        return None
     if x1 - x0 < 2 or y1 - y0 < 2:
         return None
     region = image[y0:y1, x0:x1]

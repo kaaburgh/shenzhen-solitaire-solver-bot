@@ -843,3 +843,22 @@ def test_a_column_hidden_behind_something_is_not_reported_as_empty():
     layout = detect_layout(image, CONFIG)
     assert not layout.columns[3]
     assert any("column 4" in w and "hidden" in w for w in layout.warnings), layout.warnings
+
+
+def test_a_slot_running_off_the_edge_is_not_called_hidden():
+    """A screenshot cropped through a column leaves half a slot in frame, and
+    half a slot of cards is as bright as a whole one -- so measuring the
+    fragment says "not the empty-slot mark", which is the same answer as
+    "something is covering this column". It is not: nobody can say anything
+    about a slot that runs off the picture.
+
+    Everything reading a slot compares it against what a *whole* slot looks
+    like, so the measurement has to decline rather than answer from whatever
+    survived the crop."""
+    state = auto_resolve(raw_deal(3))[0]
+    image = render(state)
+
+    for cut, name in ((slot_x(7) + CARD_W // 2, "column 8"), (slot_x(0) + CARD_W // 2, "column 1")):
+        cropped = image[:, :cut] if name == "column 8" else image[:, cut:]
+        layout = detect_layout(cropped, CONFIG)
+        assert not any("hidden" in w for w in layout.warnings), (name, layout.warnings)
