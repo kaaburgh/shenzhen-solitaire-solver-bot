@@ -707,3 +707,80 @@ def test_a_fixture_the_layout_cannot_read_is_scored_not_raised(tmp_path):
     assert score.cards_right == 0
     assert score.cards_total == len(benchmark.expected_cards(labels))
     assert score.cards_total > 30, "the whole board should be counted against it"
+
+
+# --- a column the components lost ------------------------------------------
+
+
+def test_a_column_the_components_lose_is_read_off_the_grid():
+    """Defence in depth behind the overlay cut-out, and independent of it.
+
+    The board is a fixed grid: eight slots one pitch apart, every column
+    starting at the same y. So a slot no component landed in is not
+    necessarily an empty column -- it may be a column something was drawn
+    across, fused with it, and thrown out as not card-shaped. That costs six
+    cards at once, which is the one error the deck cannot repair.
+
+    Checked with the overlay cut-out switched off, because the point is that
+    the two mechanisms do not depend on each other: either one alone reads
+    this screenshot, which is what makes the pair worth having."""
+    bank = TemplateBank.load(BANK_PATH)
+    photo = cv2.imread(str(FIXTURES / "telegram" / "shot3.jpg"))
+    expected = parse_board((FIXTURES / "telegram" / "shot3.txt").read_text())
+
+    # An opening kernel this long finds nothing, so the bar stays in the mask
+    # and the component pass loses column 4 exactly as it used to.
+    without_cut_out = LayoutConfig(overlay_width=99.0)
+    result = recognize(photo, bank, without_cut_out)
+
+    assert result.state == expected
+    assert any("column 4" in w for w in result.warnings), result.warnings
+
+
+def test_an_empty_column_is_not_invented_out_of_felt():
+    """The other half of it. The game draws *nothing* for an empty tableau
+    column -- no outline, no placeholder, only felt -- so "there is a column
+    here the components missed" and "this column is empty" are told apart by
+    how much of the slot reads as card, and nothing else.
+
+    Get that wrong in this direction and every empty column grows a phantom
+    card, which is a deck error on boards that used to read perfectly."""
+    base = raw_deal(11)
+    # Empty the third and sixth columns onto the eighth.
+    spare = base.columns[2] + base.columns[5]
+    columns = list(base.columns)
+    columns[2] = ()
+    columns[5] = ()
+    columns[7] = columns[7] + spare
+    state = State(
+        columns=tuple(columns), free=(None, None, None), foundations=(0, 0, 0), flower=False
+    )
+
+    layout = detect_layout(render(state), CONFIG)
+
+    assert [len(c) for c in layout.columns] == [len(c) for c in state.columns]
+    assert not layout.warnings, layout.warnings
+
+
+def test_the_grid_origin_is_a_slot_number_not_a_coordinate():
+    """``origin`` is backed out of the dragon buttons through a rough offset,
+    and it only ever feeds ``_slot_of``, which rounds -- so it needs to be
+    right to half a pitch and no better. Measured on a real screenshot it sits
+    about half a card away from where the columns actually are.
+
+    Anything that wants a real coordinate has to calibrate against a column
+    that was genuinely found, which is what ``column_base`` is for. A crop
+    taken at ``origin`` instead straddles the gap and catches two columns at
+    60% each -- which looks like a column being there, and reads as neither.
+    """
+    from shenzhen.vision.layout import column_base
+
+    image = render(raw_deal(2))
+    layout = detect_layout(image, CONFIG)
+    found = {slot: boxes[0] for slot, boxes in enumerate(layout.columns) if boxes}
+    pitch = CONFIG.slot_pitch * layout.card_w
+
+    base = column_base(found, pitch)
+    assert base is not None
+    for slot, box in found.items():
+        assert abs((base + slot * pitch) - box.x) <= 0.1 * layout.card_w

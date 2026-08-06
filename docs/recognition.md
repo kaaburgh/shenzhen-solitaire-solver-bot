@@ -156,6 +156,71 @@ rows on every board.
 Generalises beyond this one bar: any phone or desktop chrome drawn over the
 board is wider than a card or it is not in the way.
 
+### The board is a fixed grid, and that is a resource
+
+Eight slots one pitch apart, every tableau column starting at the same y
+whatever it holds. Measured across the fixtures at Telegram's width, both are
+steady to about 1%:
+
+| | measured | nominal |
+| --- | --- | --- |
+| pitch / card width | 1.237–1.256 | 1.25 |
+| stacking offset / card width | 0.231–0.241 | 0.243 |
+| tableau top below the top row, in card widths | 2.175–2.222 | — |
+| card blob width / card width | 0.964–1.016 | 1 |
+
+That last row is why `card_width_slack` is 0.08 and not the 0.15 it started
+at. Every card is drawn at exactly one width, so the tolerance is for the
+mask's edges, not for the artwork. Tightening it changes nothing measurable —
+identical scores at ±15%, ±8% and ±5%, at every squeeze — so it is an
+invariant made explicit rather than a fix. What the slack is *for* is the
+other side: a blob fused with something drawn over the board is wider than a
+card, and the looser this is the more of those get taken for columns.
+
+**`origin` is a slot number, not a coordinate.** It is backed out of the
+dragon buttons through `button_offset`, and the only thing it feeds is
+`_slot_of`, which rounds — so it has to be right to half a pitch and no
+better. On a real screenshot it sits about **half a card** from where the
+columns actually are. A crop taken at `origin + slot * pitch` straddles the
+gap and catches two columns at 60% each, which looks like a column being there
+and reads as neither. Anything wanting a real coordinate must calibrate
+against a column that was genuinely found — `column_base` does that, taking
+the median of `box.x - slot * pitch` over the columns the components did
+deliver.
+
+### An empty column and a lost column look identical
+
+The game draws **nothing** for an empty tableau column. No outline, no
+placeholder, no slot marker — bare felt, the same felt as anywhere else on the
+board. (The three free cells along the top *do* get dashed outlines. The
+tableau does not.) So there is no artwork to recognise, and "column 4 is
+empty" and "column 4 was lost" are the same picture as far as the mask is
+concerned.
+
+What does separate them is how much of the slot reads as card at all:
+
+| | coverage of the slot's card-height area |
+| --- | --- |
+| genuinely empty | 0.00–0.27 |
+| holding cards | 0.44 upwards |
+
+so `column_presence` sits at 0.35, between two clusters that are nowhere near
+each other. `column_at` uses it as the fallback behind the overlay cut-out:
+a slot no component landed in is checked against the grid, and if it is mostly
+card rather than mostly felt, the column is rebuilt from its known position
+and split exactly as if it had been found the ordinary way.
+
+Two mechanisms, deliberately independent — the overlay cut-out and this — and
+either alone reads the screenshot that prompted them. Getting the fallback
+wrong in the other direction is worse than the bug: every empty column would
+grow a phantom card, on boards that used to read perfectly.
+
+One wrinkle worth keeping: the scan that measures how far a column runs starts
+`CORNER_RADIUS` below the top. Cards have rounded corners, so the first row or
+two covers well under half the width, and a scan starting at the very top
+calls the column finished before it starts. That cost an hour and reads as a
+column recovered with zero cards in it.
+
 ### A shaky ink colour has to stay shaky
 
 `ink_reading` decides green/red/black by what fraction of the crop reads as
@@ -247,6 +312,11 @@ Telegram's width, against a 92.6% baseline at the time:
   search truncates at `MAX_POSSIBILITIES` long before it converges, and a
   truncated search cannot honestly call anything settled. The answer to too
   many unknowns is to read better, not to search harder.
+* **Tightening `card_width_slack`** from ±15% to ±8%, and to ±5%. Identical
+  scores at all three, at every squeeze from untouched to 950px. Worth doing
+  anyway as a statement of the invariant, but it fixes nothing: a blob fused
+  with an overlay is around *three* cards wide, so it was never near the
+  boundary either way.
 
 ## Known and not fixed
 
