@@ -353,9 +353,12 @@ async def test_fix_hands_back_an_editable_position(context):
     assert "free:" in body and "foundations:" in body
 
 
-def _misread(text: str, slot: str, card: int):
+def _misread(text: str, slot: str, card: int, card_w: int = 97):
     """A :class:`RecognitionError` carrying a reading of ``text`` with the card
-    at ``slot`` misread as ``card`` -- which is what makes it not add up."""
+    at ``slot`` misread as ``card`` -- which is what makes it not add up.
+
+    ``card_w`` is the width the picture arrived at: 97px by default, which is
+    what a screenshot sent as a Telegram photo comes through as."""
     from shenzhen.cards import make_card
     from shenzhen.game import InvalidBoard
     from shenzhen.textio import parse_board
@@ -421,7 +424,7 @@ def _misread(text: str, slot: str, card: int):
     return RecognitionError(
         str(complaint),
         reads=reads,
-        card_w=97,
+        card_w=card_w,
         skeleton=skeleton,
         deck=complaint.deck,
     )
@@ -454,8 +457,12 @@ async def test_a_reading_that_does_not_add_up_comes_back_for_the_user_to_correct
 
     body = texts(log)
     assert error.draft in body, body     # the reading, ready to be edited
-    assert "97" in body, body            # says how small it came in
-    assert "файлом" in body, body        # and what would avoid the problem
+
+    # 97px is simply what a photo comes through as, and every fixture reads
+    # back exactly at that width, so the size is not what went wrong here and
+    # the reply does not bring it up. Telling someone to resend a screenshot
+    # that was never the problem is advice that costs them a round trip.
+    assert "файлом" not in body, body
 
     # The cards that do not add up are named as they are drawn, and the draft
     # below them is in the typed notation, so the message says which is which.
@@ -464,6 +471,32 @@ async def test_a_reading_that_does_not_add_up_comes_back_for_the_user_to_correct
     assert card_mark(parse_card("G8")) in body, body   # and what ate it
     assert "G1x1" not in body, body
     assert "🟢 = G" in body, body
+
+
+@pytest.mark.asyncio
+async def test_a_picture_small_enough_to_be_the_problem_says_so(context, monkeypatch):
+    """The one case the "send it as a file" advice is for: a picture scaled
+    down so far that the glyphs are gone, which no amount of enlarging brings
+    back. Telegram never does that on its own -- it takes cropping or scaling
+    by hand -- so here the size really is the thing to fix, and the reply says
+    which size it was."""
+    error = _misread(SOLVABLE, "1.1", parse_card("G8"), card_w=48)
+
+    def blow_up(_data, _bank):
+        raise error
+
+    context.application.bot_data["config"].bank = object()  # any non-None bank
+    monkeypatch.setattr(handlers, "_recognize_bytes", blow_up)
+
+    log: list = []
+    message = FakeMessage(FakeChat(), log=log)
+    message.photo = [FakePhoto()]
+    await handlers.handle_image(FakeUpdate(message=message), context)
+
+    body = texts(log)
+    assert error.draft in body, body     # the reading still comes back
+    assert "48" in body, body            # says how small it came in
+    assert "файлом" in body, body        # and what would avoid the problem
 
 
 # --- screenshots sent as files ---------------------------------------------

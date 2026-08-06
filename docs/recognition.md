@@ -37,13 +37,13 @@ move `cards` and `confident-wrong` in the same direction, and only one of them
 shows up in a headline. **A change that improves `cards` while raising
 `confident-wrong` is a regression.**
 
-Current baseline, `main`, 31 templates:
+Current baseline, 12 fixtures, 31 templates:
 
 | | cards | boards | flagged | confident-wrong |
 | --- | --- | --- | --- | --- |
-| untouched (`--width 0`) | 99.5% | 11/11 | 5 | 0 |
-| as Telegram sends it | 99.2% | 11/11 | 7 | 0 |
-| `--quality 20` (past what is real) | 96.2% | 7/11 | 20 | 10 |
+| untouched (`--width 0`) | 99.5% | 12/12 | 5 | 0 |
+| as Telegram sends it | 99.3% | 12/12 | 7 | 0 |
+| `--quality 20` (past what is real) | 96.5% | 8/12 | 20 | 10 |
 
 ### Traps in measuring
 
@@ -63,6 +63,11 @@ Current baseline, `main`, 31 templates:
   geometry gets the better the number looks. A fixture whose geometry fails
   outright reports `NO LAYOUT` and scores zero for that board rather than
   stopping the run.
+
+  The home-indicator bug below is the worked example. It ate a whole column —
+  six cards gone — and against the board's known slots that reads 97.8%
+  against 99.3% fixed. Scored over the reads that came back it would have
+  read **99.2%**: a tenth of a point, for one eighth of the board vanishing.
 * Reads landing in tableau slots the board does not have — a column cut one
   card too many — are reported in brackets rather than scored. There is no
   truth to compare them against, and `boards` already fails.
@@ -121,6 +126,36 @@ deck and to the user, so it only has to be *detected*, not resolved. Anything
 that makes the matcher more confident without making it more right attacks
 this directly. It is why `confident-wrong` is the metric to watch.
 
+### The screenshot contains the phone, not just the game
+
+A screenshot is of the whole screen. On an iPhone the home indicator — the
+pale bar along the bottom — lies right across whichever column runs that far
+down, and it is bright and unsaturated, so `card_mask` takes it for a card
+face.
+
+What makes it expensive is that it *touches* the column, so it is not a stray
+blob that could be ignored. The two fuse into one component about three cards
+wide, the width filter throws that out as not card-shaped, and the column goes
+with it. **A whole column missing is the one error the deck cannot repair** —
+six cards absent read as six cards missing, and every reading fails.
+
+What separates the phone's furniture from the game is *length*. Nothing the
+game draws is wider than one card, and the slots sit a quarter of a card
+apart, so there is a clear band between them for the threshold to live in
+(`LayoutConfig.overlay_width`, 1.3 cards). A horizontal opening with a kernel
+that long keeps exactly the runs that are not the board.
+
+The part worth remembering is what happens next. Cutting the bar out leaves
+the column it lay across in two pieces, so the cut-out is **kept rather than
+deleted**: two blobs are one column when what lies between them is precisely
+what was erased. That condition is not decoration — it is what stops the join
+from bridging the felt between the top row and the tableau, which is a narrower
+gap than the bar is thick. A join keyed on distance alone would fuse those two
+rows on every board.
+
+Generalises beyond this one bar: any phone or desktop chrome drawn over the
+board is wider than a card or it is not in the way.
+
 ### A shaky ink colour has to stay shaky
 
 `ink_reading` decides green/red/black by what fraction of the crop reads as
@@ -138,13 +173,52 @@ So a reading that lands within a factor of `COLOUR_UNCERTAIN` of the threshold
 sets `Guess.colour_certain = False`, which makes the whole read unsure. The
 deck settles both cases once they arrive as doubt rather than as a decision.
 
-It is cheap: 6 reads out of 403 across the fixture set at Telegram's width
+It is cheap: 6 reads out of 441 across the fixture set at Telegram's width
 land in that band. It is also, as of now, why almost everything that gets
 flagged gets flagged — 6 of the 7. If a change drops `flagged` to zero, check
 whether this is what it switched off before believing the matcher got better.
 
 **Do not try to fix this by tuning `COLOUR_FRACTION`.** It has been tried; the
 distributions overlap.
+
+### Two width thresholds, for two different questions
+
+There are two, and confusing them is how the bot ended up blaming the picture
+for its own bugs.
+
+`MIN_RELIABLE_CARD_WIDTH` (150) is **where enlarging is needed** — the width
+below which the matcher wants help. It is an input to `enlarge` and nothing
+else.
+
+`MIN_RECOVERABLE_CARD_WIDTH` (75) is **where the size is worth mentioning to
+whoever sent the picture** — where enlarging stops being enough. It is what
+both `RecognitionError.narrow` and `Recognition.narrow` are keyed on, and so
+the only one the user ever hears about. Measured with the whole pipeline in
+place, enlargement and deck check included, which is what the sender actually
+gets:
+
+| card width | readings the deck threw out |
+| --- | --- |
+| ≥100px | none (0/239) |
+| 80–99px (a phone screenshot sent as a photo) | 1 in 22 (2/44) |
+| 70–79px | 1 in 11 (2/22) |
+| <70px | 1 in 2 (17/34) |
+
+Swept over the `.png` fixtures rescaled from 700px wide upwards in steps of
+50, bucketed by the card width that came out. Reproduced independently of the
+run that set the threshold, which swept differently and got 1 in 120 / 1 in 17
+/ 1 in 7 / 3 in 5 — same shape, different denominators. The shape is the part
+that matters, and it is robust: clean at ≥100px, rare in the eighties,
+common below seventy.
+
+"Send it as a file" is real advice and at 97px it is the wrong advice: a
+reading that fails at the width Telegram delivers has almost certainly failed
+at something else, and saying "your picture is too small" sends the sender off
+to fix what was not wrong. That is not hypothetical — it is what the bot did
+for a column the phone had drawn its home indicator across.
+
+Nothing arriving as a Telegram photo comes near 75px. A picture that small has
+been cropped or scaled by hand, and then the size really is the thing to fix.
 
 ### A seam is wide, a glyph is not
 

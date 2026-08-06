@@ -17,7 +17,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 import pytest
-from fake_board import CARD_W, OFFSET, TABLEAU_Y, render, slot_x
+from fake_board import CARD_H, CARD_W, OFFSET, TABLEAU_Y, render, slot_x
 
 from shenzhen.cards import (
     BLACK,
@@ -41,6 +41,7 @@ from shenzhen.vision.layout import (
     find_dragon_buttons,
 )
 from shenzhen.vision.recognize import (
+    MIN_RECOVERABLE_CARD_WIDTH,
     MIN_RELIABLE_CARD_WIDTH,
     RecognitionError,
     recognize,
@@ -100,6 +101,49 @@ def test_ink_across_the_lattice_is_not_taken_for_a_card_boundary():
 
     layout = detect_layout(image, CONFIG)
     assert [len(c) for c in layout.columns] == [len(c) for c in state.columns]
+
+
+def test_a_bar_the_phone_draws_over_the_board_costs_no_columns():
+    """The iPhone home indicator lies across the bottom of every screenshot,
+    over whichever columns run that far down.  It is pale, so the card mask
+    takes it for a card face, and it *touches* the column, so it is not a
+    stray blob that could be ignored: the two fuse into one component several
+    cards wide, which is then dropped as not card-shaped.
+
+    That is a whole column missing from the reading rather than a card read
+    wrong -- and a missing column is the one error the deck check cannot
+    repair, since forty cards minus a column is not a board at all.  Drawn
+    here across four slots at once, because the bar is wide enough to bridge
+    neighbouring columns as well as to widen one.
+    """
+    state = auto_resolve(raw_deal(3))[0]
+    image = render(state)
+    deepest = max(len(c) for c in state.columns)
+    row = TABLEAU_Y + (deepest - 1) * OFFSET + int(CARD_H * 0.8)
+    cv2.rectangle(
+        image,
+        (slot_x(2), row),
+        (slot_x(5) + CARD_W, row + int(CARD_W * 0.06)),
+        (240, 240, 240),
+        -1,
+    )
+
+    layout = detect_layout(image, CONFIG)
+    assert [len(c) for c in layout.columns] == [len(c) for c in state.columns]
+    assert not layout.warnings
+
+
+def test_the_gap_between_the_two_rows_is_never_bridged():
+    """The join that puts a column back together only closes a gap an overlay
+    was cut out of.  Nothing else qualifies -- in particular the strip of felt
+    between the top row and the tableau, which is narrower than the bar above
+    and would fuse a free cell to the column beneath it."""
+    state = auto_resolve(raw_deal(5))[0]
+    layout = detect_layout(render(state), CONFIG)
+
+    assert [len(c) for c in layout.columns] == [len(c) for c in state.columns]
+    for index, cell in enumerate(state.free):
+        assert (layout.free_cells[index] is not None) == (cell is not None)
 
 
 def test_the_stacking_offset_is_measured_not_guessed():
@@ -353,8 +397,13 @@ def test_a_screenshot_sent_as_a_photo_reads_back_exactly(name, image_path, expec
 
     assert result.state == parse_board(expected_path.read_text(encoding="utf-8")), name
     assert result.uncertain == [], [r.where for r in result.uncertain]
-    assert result.narrow is not None, "the point of the fixture is that it is small"
-    assert result.narrow < MIN_RELIABLE_CARD_WIDTH
+    assert result.source_card_w is not None
+    assert result.source_card_w < MIN_RELIABLE_CARD_WIDTH, (
+        "the point of the fixture is that it arrives below what reads on its own"
+    )
+    # And having read it exactly, there is nothing to tell the sender about
+    # the size of what they sent.
+    assert result.narrow is None
 
 
 @pytest.mark.skipif(not BANK_PATH.is_dir(), reason="no template bank installed")
@@ -380,23 +429,33 @@ def test_enlarging_the_picture_is_what_makes_a_photo_readable(monkeypatch):
 
 
 @pytest.mark.skipif(not BANK_PATH.is_dir(), reason="no template bank installed")
-def test_a_board_that_reads_but_came_in_small_is_flagged_for_checking():
-    """Between "reads perfectly" and "cannot possibly be right" there is a
-    band where most boards still come out correct. Those are not refused --
-    but the width comes back with the read, which is what stops the bot
-    treating it as something it is sure of.
+def test_only_a_picture_smaller_than_telegram_sends_is_flagged_as_small():
+    """Where the "send it as a file" advice belongs, and where it does not.
 
-    A number rather than a sentence, deliberately: the caller says it in the
-    user's own language, and the reader has no business writing English into
-    the middle of a Russian reply."""
+    A screenshot sent as a photo is not small in any sense worth telling its
+    sender about: it is the size everybody's screenshots arrive at, it is the
+    size every fixture reads back exactly at, and a reading that fails there
+    failed at something else -- for a long time at a column the phone had
+    drawn its home indicator across. Saying "your picture is too small" to
+    that sends them off to fix what was not broken.
+
+    Scaled down by hand until the cards are past what enlarging can recover,
+    the size really is the thing to fix, and then it is worth saying. A number
+    rather than a sentence, deliberately: the caller says it in the user's own
+    language, and the reader has no business writing English into the middle
+    of a Russian reply."""
     bank = TemplateBank.load(BANK_PATH)
     original = cv2.imread(str(FIXTURES / "ipad" / "shot1.png"))
 
     result = recognize(_as_telegram_photo(original), bank)
     assert result.state == parse_board((FIXTURES / "ipad" / "shot1.txt").read_text())
-    assert not result.confident
-    assert result.narrow is not None
-    assert result.narrow < MIN_RELIABLE_CARD_WIDTH
+    assert result.source_card_w is not None
+    assert result.source_card_w < MIN_RELIABLE_CARD_WIDTH
+    assert result.narrow is None
+
+    smaller = recognize(_as_telegram_photo(original, width=800), bank)
+    assert smaller.narrow is not None
+    assert smaller.narrow < MIN_RECOVERABLE_CARD_WIDTH
 
 
 @pytest.mark.skipif(not BANK_PATH.is_dir(), reason="no template bank installed")
@@ -479,7 +538,9 @@ def test_a_reading_that_does_not_add_up_comes_back_as_a_draft_to_correct():
         recognize(mangled, bank)
 
     error = excinfo.value
-    assert error.narrow
+    # Squeezed, not shrunk: it arrived at the width every photo arrives at, so
+    # there is no "send a bigger picture" to offer here, only the draft.
+    assert not error.narrow
     draft = error.draft
     assert draft is not None
 

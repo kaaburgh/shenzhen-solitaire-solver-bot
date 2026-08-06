@@ -8,11 +8,13 @@ the foundations.  Recovering that grid is most of the work:
 1. threshold the image -- card faces are far brighter and far less saturated
    than the felt -- and take the connected components;
 2. read the card width off them (every card is drawn the same size);
-3. locate the dragon buttons by their tan colour.  They are always drawn, they
+3. cut out what the phone drew over the game, which is anything wider than a
+   card, and join back up the columns it was lying across;
+4. locate the dragon buttons by their tan colour.  They are always drawn, they
    never move, and they anchor the grid to slot 3, which is what makes the
    assignment work when the leftmost slots happen to be empty;
-4. split the top row from the tableau by the vertical gap between them;
-5. cut each tableau column into individual cards.
+5. split the top row from the tableau by the vertical gap between them;
+6. cut each tableau column into individual cards.
 
 That last step needs care.  Overlapping cards do not separate into distinct
 components -- a column comes out as one tall blob -- and the seam between two
@@ -93,6 +95,16 @@ class LayoutConfig:
     #: Only used to pick the nearest slot, so it has half a slot of slack.
     button_offset: float = 0.27
 
+    # -- what the phone draws over the game ---------------------------------
+    #: a horizontal run at least this many card widths long is not the board.
+    #: Nothing the game draws is wider than one card, and neighbouring slots
+    #: are a quarter of a card apart, so there is a clear band between the two
+    #: for this to sit in.
+    overlay_width: float = 1.30
+    #: how much of a column's width an erased overlay has to span before the
+    #: pieces either side of it count as one column
+    overlay_cover: float = 0.50
+
     # -- splitting a column into cards -------------------------------------
     #: ignore this much of a column's width at each side when profiling
     profile_inset: float = 0.08
@@ -165,6 +177,84 @@ def card_mask(image: np.ndarray) -> np.ndarray:
     mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=1)
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=1)
     return mask
+
+
+def find_overlays(mask: np.ndarray, card_w: int, config: LayoutConfig) -> np.ndarray:
+    """What the phone drew on top of the game, as a mask of its own.
+
+    A screenshot is of the whole screen, and the phone has furniture of its
+    own on it: on an iPhone a pale home indicator lies across the bottom,
+    right over whichever column happens to run that far down.  It is pale and
+    bright, so the card mask takes it for a card face -- and because it
+    touches the column, it is not a stray blob that could simply be ignored.
+    It fuses with the column into one component three cards wide, which is
+    then thrown out as not card-shaped, taking the column with it.  That is a
+    whole column missing from the reading rather than a card read wrong, and
+    the deck check cannot recover from it.
+
+    What separates the two is length.  Nothing the game draws is wider than a
+    card, and the columns are set a quarter of a card apart, so a horizontal
+    run longer than one card belongs to something else whatever it is.
+    Opening the mask with a flat kernel that long keeps exactly those runs and
+    nothing else.  They come back rather than being simply deleted because
+    where they were is worth knowing: cutting one out leaves the column it lay
+    on in two pieces, and it is the cut-out itself that says those pieces
+    belong together.  See :func:`join_fragments`.
+    """
+    length = max(2, int(round(config.overlay_width * card_w)))
+    kernel = np.ones((1, length), np.uint8)
+    return cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+
+
+def join_fragments(
+    boxes: list[Box], overlay: np.ndarray, card_w: int, config: LayoutConfig
+) -> list[Box]:
+    """Put a column's pieces back together where an overlay was cut out of it.
+
+    Two blobs are one column when they line up horizontally and what lies
+    between them is the thing that was erased.  That last condition is what
+    makes this safe to do before the board has been laid out at all: the gap
+    between the top row and the tableau is a quarter of a card of bare felt,
+    and bare felt is not an overlay, so the two rows are never fused.
+
+    The join is a bounding box, and the span it closes over is card rather
+    than background -- the overlay was drawn on top of the column, not in
+    place of it.  Cutting a column into cards reads the seams off the picture
+    and not off the mask, so the joined blob splits exactly as the column
+    would have had the phone drawn nothing.
+    """
+    if len(boxes) < 2 or not overlay.any():
+        return list(boxes)
+
+    order = sorted(boxes, key=lambda b: (b.x, b.y))
+    joined: list[Box] = []
+    for box in order:
+        last = joined[-1] if joined else None
+        if last is not None and _bridged(last, box, overlay, card_w, config):
+            x = min(last.x, box.x)
+            right = max(last.x + last.w, box.x + box.w)
+            joined[-1] = Box(x, last.y, right - x, max(last.bottom, box.bottom) - last.y)
+        else:
+            joined.append(box)
+    return joined
+
+
+def _bridged(
+    upper: Box, lower: Box, overlay: np.ndarray, card_w: int, config: LayoutConfig
+) -> bool:
+    """Are these two blobs one column, with an erased overlay between them?"""
+    left = max(upper.x, lower.x)
+    right = min(upper.x + upper.w, lower.x + lower.w)
+    if right - left < 0.5 * card_w:  # not stacked one above the other
+        return False
+    gap = range(upper.bottom, lower.y)
+    # An empty gap is not an overlay to bridge, and one deeper than a card is
+    # further apart than any overlay is thick.
+    if not 0 < len(gap) <= card_w:
+        return False
+    return all(
+        overlay[row, left:right].mean() >= config.overlay_cover * 255 for row in gap
+    )
 
 
 def _components(mask: np.ndarray, min_area: float) -> list[Box]:
@@ -359,12 +449,25 @@ def detect_layout(image: np.ndarray, config: LayoutConfig | None = None) -> Boar
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     mask = card_mask(image)
 
-    boxes = _components(mask, min_area=config.min_area_ratio * height * width)
+    min_area = config.min_area_ratio * height * width
+    boxes = _components(mask, min_area=min_area)
     if not boxes:
         raise LayoutError("no card-like shapes found; is this a screenshot of the board?")
 
+    # Measured before anything is stripped, because stripping needs a length to
+    # measure against.  Safe to do in that order: the width is the dominant one
+    # among a dozen-odd blobs, and an overlay can only ever fuse with a few of
+    # them, so the cards still outvote whatever it made of those.
     card_w = _estimate_card_width(boxes)
+    overlay = find_overlays(mask, card_w, config)
+    if overlay.any():
+        boxes = _components(cv2.bitwise_and(mask, cv2.bitwise_not(overlay)), min_area)
+        if not boxes:
+            raise LayoutError("no card-like shapes found; is this a screenshot of the board?")
+        card_w = _estimate_card_width(boxes)
+
     boxes = [b for b in boxes if 0.85 * card_w <= b.w <= 1.15 * card_w]
+    boxes = join_fragments(boxes, overlay, card_w, config)
     if not boxes:
         raise LayoutError("nothing card-shaped found; is this a screenshot of the board?")
     card_h = int(round(card_w * config.card_aspect))

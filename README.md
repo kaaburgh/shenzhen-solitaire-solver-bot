@@ -195,6 +195,21 @@ tan colour rather than by brightness so that a darkened one still counts —
 they are always drawn and never move, which is what makes the free cells
 identifiable on a board whose first columns happen to be empty.
 
+A screenshot is of the whole screen, so the phone's own furniture is in it,
+and on an iPhone the pale home indicator lies right across the bottom — over
+whichever column runs that far down. It is bright and unsaturated, so it looks
+exactly like a card face, and because it *touches* the column it is not a
+stray blob that could be ignored: the two fuse into one shape three cards
+wide, which is thrown out as not card-shaped and takes the column with it.
+That is a whole column missing from the reading, and unlike a card read wrong
+it is not something the deck can repair. What tells the bar from the board is
+length: nothing the game draws is wider than one card, and the slots are set a
+quarter of a card apart, so a horizontal run longer than a card belongs to
+something else whatever it is. Those runs are cut out of the mask before
+anything is measured, and the pieces of column either side of a cut are joined
+back up — where the gap between two blobs is exactly what was cut out of it,
+the two are one column.
+
 Splitting a column into cards is the part worth explaining. Overlapping cards
 do not come apart when the image is thresholded — a column is one tall blob,
 and the seam between two cards is not dark enough to find. What is findable is
@@ -289,10 +304,27 @@ resize beats against the original grid so which cards it smears depends on
 where they happen to sit.
 
 Sending the screenshot **as a file** still avoids all of this — it arrives
-untouched. It is no longer a requirement, and it is no longer volunteered: the
-advice only appears on a reading that actually failed to add up, since that is
-the only time the size of the picture is worth anyone's attention. A picture
-that came in small and read correctly is a picture that read correctly.
+untouched. It is no longer a requirement, and it is barely ever volunteered. A
+picture that came in small and read correctly is a picture that read
+correctly, so the advice needs a reading that actually failed to add up — and
+that alone is not enough either, because at 97px a failed reading has almost
+certainly failed at something else:
+
+| card width in the picture | readings the deck threw out |
+| --- | --- |
+| ≥100px | none (0/239) |
+| 80–99px (a phone screenshot sent as a photo) | 1 in 22 |
+| 70–79px | 1 in 11 |
+| <70px | 1 in 2 |
+
+Measured on the same fixtures, but with the whole pipeline in place —
+enlargement, and the deck settling the shaky reads — which is what the person
+on the other end actually gets. So the advice waits for cards under **75px**,
+which nothing arriving as a Telegram photo comes near: a picture that small
+has been cropped or scaled by hand, and then the size really is the thing to
+fix. Above it the reply is the draft to correct and nothing else. For a long
+time the picture got the blame for a column the phone had drawn its home
+indicator across, which is exactly the round trip this avoids.
 
 ## Confirming what was read
 

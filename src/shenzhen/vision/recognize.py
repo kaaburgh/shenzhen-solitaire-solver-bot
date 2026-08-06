@@ -33,6 +33,24 @@ from .resolve import Resolution, Skeleton, Unresolvable, resolve
 # exist rather than as the board on screen.
 MIN_RELIABLE_CARD_WIDTH = 150
 
+# The width below which the size of the picture is worth *mentioning* to
+# whoever sent it. A different question from the one above, and a much lower
+# answer: 150px is where enlarging stops being needed, and this is where
+# enlarging stops being enough. Measured with the whole pipeline in place --
+# the enlargement, and the deck check that proves the shaky reads -- which is
+# what the person on the other end actually gets. Readings the deck throws out
+# are absent at >=100px, rare in the eighties and common below seventy; the
+# banded figures are in docs/recognition.md, which is the one place they live
+# so that two copies cannot disagree.
+#
+# Sending a screenshot as a file instead of as a photo is real advice, and at
+# 97px it is the wrong advice: at that width a reading that fails has almost
+# certainly failed for some other reason, and telling someone their picture is
+# too small blames them for it. Nothing that arrives as a Telegram photo comes
+# anywhere near 75px -- a picture that small has been cropped or scaled by
+# hand, and then the size really is the thing to fix.
+MIN_RECOVERABLE_CARD_WIDTH = 75
+
 # Ceiling on the enlarged copy, so that a picture the layout pass reads a
 # nonsense card width off cannot ask for a nonsense amount of memory. A
 # Telegram photo doubles to about 3 megapixels and the largest fixture is
@@ -64,13 +82,16 @@ class RecognitionError(RuntimeError):
 
     @property
     def narrow(self) -> bool:
-        """Did the picture arrive below the width that reads reliably?
+        """Is the picture small enough to be the reason this failed?
 
-        Worth separating from the rest: it says whether a smaller picture is a
-        plausible cause of the failure, which is the difference between "this
-        is not the game" and "this came out garbled".
+        Worth separating from the rest: it is the difference between "this is
+        not the game" and "this came out garbled". The bar is
+        :data:`MIN_RECOVERABLE_CARD_WIDTH` rather than the width the reader
+        would have liked, because a reading that fails at the size Telegram
+        sends photos at has failed at something else, and saying "your picture
+        is too small" sends the sender off to fix what was not wrong.
         """
-        return self.card_w is not None and self.card_w < MIN_RELIABLE_CARD_WIDTH
+        return self.card_w is not None and self.card_w < MIN_RECOVERABLE_CARD_WIDTH
 
     @property
     def draft(self) -> str | None:
@@ -160,15 +181,20 @@ class Recognition:
 
     @property
     def narrow(self) -> int | None:
-        """The card width, when it came in under what reads reliably.
+        """The card width, when the picture came in small enough to worry at.
 
-        Not fatal -- the picture is enlarged before it is read and the deck
-        settles what is left, and a card the deck settles is proved rather
-        than guessed.  But it is worth passing on, so it is a number the
-        caller can put in its own words rather than a sentence of English in
-        the middle of a Russian reply.
+        Not fatal even then -- the picture is enlarged before it is read and
+        the deck settles what is left, and a card the deck settles is proved
+        rather than guessed.  But it is worth passing on, so it is a number
+        the caller can put in its own words rather than a sentence of English
+        in the middle of a Russian reply.
+
+        A picture merely below :data:`MIN_RELIABLE_CARD_WIDTH` does not count:
+        that is every screenshot Telegram has been asked to send as a photo,
+        and every one of them reads back exactly.  ``source_card_w`` is still
+        there for anyone who wants the number regardless.
         """
-        if self.source_card_w is None or self.source_card_w >= MIN_RELIABLE_CARD_WIDTH:
+        if self.source_card_w is None or self.source_card_w >= MIN_RECOVERABLE_CARD_WIDTH:
             return None
         return self.source_card_w
 
