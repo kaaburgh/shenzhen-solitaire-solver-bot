@@ -455,6 +455,26 @@ an empty tableau, every cell locked, a board whose first columns are empty.
 Those synthetic tests deliberately stop at the geometry: matching stand-in
 marks would measure the stand-in, not the pipeline.
 
+The suite answers yes or no on every fixture, which is what CI needs and no
+use at all for tuning a threshold. For that there is a benchmark:
+
+```sh
+python -m shenzhen.vision.benchmark              # as Telegram delivers them
+python -m shenzhen.vision.benchmark --width 0    # untouched, off the device
+```
+
+It scores the whole fixture set four ways — cards read right, boards read
+exactly, reads the matcher declined to call, and reads it called confidently
+and got wrong. The last of those is the one to watch: a confident read never
+reaches the deck resolver, so each one is a silent mistake in a board the bot
+presents as read.
+
+What has already been measured about reading screenshots — which levers move
+those numbers, which plausible changes turned out to do nothing, which
+thresholds have no good value — is in
+[docs/recognition.md](docs/recognition.md), which is worth reading before
+touching `vision/` and worth adding to afterwards.
+
 ```
 src/shenzhen/
   cards.py      card encoding and text notation
@@ -462,6 +482,7 @@ src/shenzhen/
   solver.py     the search
   notation.py   rendering boards and moves, ru/en
   textio.py     parsing a typed position
-  vision/       layout.py, classify.py, resolve.py, recognize.py, calibrate.py
+  vision/       layout.py, classify.py, resolve.py, recognize.py,
+                crop.py, verify.py, calibrate.py, benchmark.py
   bot/          main.py, handlers.py, i18n.py, storage.py, runtime_coverage.py
 ```
