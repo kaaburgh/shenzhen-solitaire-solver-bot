@@ -55,6 +55,15 @@ BACK_LIGHT = (232, 240, 235)
 # Muted enough to still read as a card rather than as felt, which is how the
 # game draws the back too.
 BACK_GREEN = (120, 165, 130)
+# An empty tableau slot is not bare felt: the game marks it with a card-sized
+# patch of a lighter green check.  Measured off a real screenshot it alternates
+# between the felt and a green about 40% brighter, which puts the patch as a
+# whole 10-19% brighter than the felt beside it -- and, because it stays this
+# saturated, it does not read as a card face.  Rendering the tableau without it
+# was leaving the synthetic boards unfaithful in exactly the respect anything
+# that tells "empty" from "lost" has to get right.
+SLOT_CHECK = (78, 108, 62)
+SLOT_CHECK_PERIOD = 8
 
 INK = {GREEN: (40, 130, 40), RED: (40, 40, 190), BLACK: (35, 35, 35)}
 
@@ -152,6 +161,14 @@ def draw_back(canvas: np.ndarray, x: int, y: int) -> None:
     cv2.rectangle(canvas, (x, y), (x + CARD_W - 1, y + CARD_H - 1), BUTTON, 3)
 
 
+def draw_empty_slot(canvas: np.ndarray, x: int, y: int) -> None:
+    """The mark the game leaves where a column has been emptied."""
+    patch = canvas[y : y + CARD_H, x : x + CARD_W]
+    rows, cols = np.indices(patch.shape[:2])
+    check = ((rows // SLOT_CHECK_PERIOD + cols // SLOT_CHECK_PERIOD) % 2).astype(bool)
+    patch[check] = SLOT_CHECK
+
+
 def draw_buttons(canvas: np.ndarray) -> None:
     """The three dragon buttons, in slot 3.  Always drawn, whatever the state."""
     x = slot_x(BUTTON_SLOT) + 20
@@ -187,6 +204,9 @@ def render(state: State, width: int = 2050, height: int = 1330) -> np.ndarray:
 
     for index, column in enumerate(state.columns):
         x = slot_x(index)
+        if not column:
+            draw_empty_slot(canvas, x, TABLEAU_Y)
+            continue
         for depth, card in enumerate(column):
             y = TABLEAU_Y + depth * OFFSET
             visible = OFFSET if depth < len(column) - 1 else CARD_H
