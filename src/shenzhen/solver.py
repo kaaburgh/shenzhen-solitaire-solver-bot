@@ -18,7 +18,7 @@ import time
 from dataclasses import dataclass, field
 from enum import StrEnum
 
-from .cards import SUITS, is_locked, locked_colour
+from .cards import NUM_CARD_IDS, SUITS, is_locked, locked_colour
 from .game import Move, State, successors
 
 DEFAULT_MAX_NODES = 400_000
@@ -84,6 +84,28 @@ def heuristic(state: State) -> int:
     return score
 
 
+def _search_key(state: State) -> tuple:
+    """Canonical position identity shaped for the solver's hot dictionaries.
+
+    ``State.key`` groups the same components into nested tuples.  Flattening
+    them means dict/set hashing does not re-enter wrapper tuples around the
+    columns, free cells and foundations for every lookup.  Free cells are
+    always three entries, so a tiny sorting network also avoids allocating the
+    generator and temporary tuple used by the general-purpose state key.
+    """
+    a, b, c = state.free
+    a = NUM_CARD_IDS if a is None else a
+    b = NUM_CARD_IDS if b is None else b
+    c = NUM_CARD_IDS if c is None else c
+    if a > b:
+        a, b = b, a
+    if b > c:
+        b, c = c, b
+    if a > b:
+        a, b = b, a
+    return (*sorted(state.columns), a, b, c, *state.foundations, state.flower)
+
+
 def solve(
     state: State,
     *,
@@ -96,7 +118,7 @@ def solve(
     if state.is_won:
         return SolveResult(Status.SOLVED, [], 0, 0.0)
 
-    start_key = state.key()
+    start_key = _search_key(state)
     # key -> (cost so far, parent key, move that got here, state, collected)
     seen: dict[tuple, tuple[int, tuple | None, Move | None, State, tuple[int, ...]]] = {
         start_key: (0, None, None, state, ())
@@ -127,7 +149,7 @@ def solve(
         nodes += 1
 
         for move, nxt, collected in successors(current):
-            nxt_key = nxt.key()
+            nxt_key = _search_key(nxt)
             cost = g + 1
             if nxt_key in expanded:
                 continue
