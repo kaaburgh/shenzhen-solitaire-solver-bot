@@ -372,41 +372,59 @@ def legal_moves(state: State) -> list[Move]:
     free = state.free
     foundations = state.foundations
 
-    # Collapsing dragons frees a cell and removes four cards; try it first.
-    for colour in SUITS:
-        if can_collapse_dragons(state, colour):
-            moves.append(Move("dr", colour))
-
-    # Manual foundation moves.  The game only collects automatically when it
-    # is provably safe, but the player may always drag a card up by hand.
-    # (``foundations[suit] == rank - 1`` is ``foundations[card // 9] == card % 9``.)
-    for i, col in enumerate(columns):
-        if col:
-            top = col[-1]
-            if top < DRAGON_BASE and foundations[top // 9] == top % 9:
-                moves.append(Move("tF", i))
+    # Gather everything the three free cells tell move generation in one pass.
+    # A matching exposed dragon can itself be the destination of a collapse;
+    # an empty cell works for every colour.
+    exposed_dragons = [0, 0, 0]
+    free_dragons = [False, False, False]
+    empty_cell = None
+    foundation_free: list[int] = []
     for i, cell in enumerate(free):
-        if cell is not None and 0 <= cell < DRAGON_BASE and foundations[cell // 9] == cell % 9:
-            moves.append(Move("fF", i))
+        if cell is None:
+            if empty_cell is None:
+                empty_cell = i
+        elif DRAGON_BASE <= cell < FLOWER:
+            colour = cell - DRAGON_BASE
+            exposed_dragons[colour] += 1
+            free_dragons[colour] = True
+        elif 0 <= cell < DRAGON_BASE and foundations[cell // 9] == cell % 9:
+            foundation_free.append(i)
 
-    # Empty columns are interchangeable; only the first one is a destination.
-    first_empty_column = next((i for i, c in enumerate(columns) if not c), None)
-
-    # Per column: the run that can be picked up, and what the exposed card
-    # accepts.  Computed once instead of inside the src x dst loop below.
+    # Per-column metadata already needs every exposed card.  Fold dragon
+    # exposure, manual foundation candidates, and first-empty discovery into
+    # that pass instead of rescanning the tableau for each of them.
+    first_empty_column = None
     runs: list[int] = []
     accepts: list[tuple[int, int] | None] = []  # (required rank, forbidden suit)
-    for col in columns:
+    foundation_columns: list[int] = []
+    for i, col in enumerate(columns):
         if not col:
+            if first_empty_column is None:
+                first_empty_column = i
             runs.append(0)
             accepts.append(None)
             continue
+
         runs.append(max_run_length(col))
         top = col[-1]
         if top < DRAGON_BASE:
             accepts.append((top % 9, top // 9))  # rank_of(top) - 1, suit_of(top)
+            if foundations[top // 9] == top % 9:
+                foundation_columns.append(i)
         else:
             accepts.append(None)
+            if DRAGON_BASE <= top < FLOWER:
+                exposed_dragons[top - DRAGON_BASE] += 1
+
+    # Preserve the old move order: collapses first, then manual foundations.
+    has_empty_cell = empty_cell is not None
+    for colour in SUITS:
+        if exposed_dragons[colour] == 4 and (has_empty_cell or free_dragons[colour]):
+            moves.append(Move("dr", colour))
+    for i in foundation_columns:
+        moves.append(Move("tF", i))
+    for i in foundation_free:
+        moves.append(Move("fF", i))
 
     # Tableau -> tableau.
     for src, col in enumerate(columns):
@@ -459,7 +477,6 @@ def legal_moves(state: State) -> list[Move]:
 
     # Tableau -> free cell.  All empty cells are interchangeable, so only the
     # first one is offered.
-    empty_cell = next((i for i, c in enumerate(free) if c is None), None)
     if empty_cell is not None:
         for src, col in enumerate(columns):
             if col:
