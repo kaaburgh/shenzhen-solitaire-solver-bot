@@ -18,8 +18,9 @@ import time
 from dataclasses import dataclass, field
 from enum import StrEnum
 
+from ._solver_successors import successors_from_settled
 from .cards import NUM_CARD_IDS, SUITS, is_locked, locked_colour
-from .game import Move, State, successors
+from .game import Move, State
 
 DEFAULT_MAX_NODES = 400_000
 DEFAULT_TIME_LIMIT = 20.0
@@ -148,7 +149,7 @@ def solve(
         current = entry[3]
         nodes += 1
 
-        for move, nxt, collected in successors(current):
+        for move, nxt, collected in successors_from_settled(current):
             nxt_key = _search_key(nxt)
             cost = g + 1
             if nxt_key in expanded:
