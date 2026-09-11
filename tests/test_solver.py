@@ -81,6 +81,32 @@ def test_a_dead_position_is_reported_as_unsolvable():
     assert result.status is Status.UNSOLVABLE
 
 
+def test_hard_dead_position_is_exhausted_without_reopening_states():
+    """A real late-game dead end has many cheaper routes back to old states.
+
+    Reopening those canonical positions used to spend 86,672 node expansions
+    proving the position dead.  Expanding each position once exhausts the same
+    graph below a 70,000-node budget.
+    """
+    state = parse_board(
+        """
+        free: DR DB DG
+        flower: 1
+        foundations: 3 0 2
+        1: DR R4 DG B7 R6 G5 B4 R3
+        2: B5 DR DB G9 R8 G7 B6
+        3: G8 DR
+        4: R9 B8 R7 G6 R5 G4 B3 R2
+        5:
+        6: DG R1 DB B9 DG
+        7:
+        8: DB
+        """
+    )
+    result = solve(state, max_nodes=70_000, time_limit=60)
+    assert result.status is Status.UNSOLVABLE
+
+
 def test_budget_exhaustion_is_not_reported_as_unsolvable():
     result = solve(deal(0), max_nodes=1, time_limit=60)
     assert result.status is Status.UNKNOWN

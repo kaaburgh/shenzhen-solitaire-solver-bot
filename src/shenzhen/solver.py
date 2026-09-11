@@ -101,6 +101,10 @@ def solve(
     seen: dict[tuple, tuple[int, tuple | None, Move | None, State, tuple[int, ...]]] = {
         start_key: (0, None, None, state, ())
     }
+    # A canonical position has the same successors regardless of how cheaply
+    # it was reached.  Once expanded, reopening it can only regenerate work we
+    # have already done; keep lower-cost updates only while it is still queued.
+    expanded: set[tuple] = set()
     counter = 0
     queue: list[tuple[int, int, int, tuple]] = [(heuristic(state) * HEURISTIC_WEIGHT, 0, 0, start_key)]
 
@@ -113,15 +117,20 @@ def solve(
             break
 
         _, g, _, key = heapq.heappop(queue)
+        if key in expanded:
+            continue
         entry = seen[key]
         if g > entry[0]:
             continue  # stale queue entry
+        expanded.add(key)
         current = entry[3]
         nodes += 1
 
         for move, nxt, collected in successors(current):
             nxt_key = nxt.key()
             cost = g + 1
+            if nxt_key in expanded:
+                continue
             known = seen.get(nxt_key)
             if known is not None and known[0] <= cost:
                 continue
