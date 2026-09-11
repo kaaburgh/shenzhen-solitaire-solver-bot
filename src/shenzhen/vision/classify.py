@@ -147,6 +147,13 @@ def standardise(patch: np.ndarray) -> np.ndarray:
 #: cream card behind it even though the same glyph is unambiguous in a PNG.
 COLOUR_SATURATION = 50
 
+#: minimum absolute BGR channel spread for a pixel to count as coloured ink.
+#: HSV saturation is relative to brightness, so JPEG chroma noise around very
+#: dark black strokes can clear ``COLOUR_SATURATION`` even when the channels
+#: differ by only a handful of levels.  The black-dragon regressions peak at
+#: 18-19 levels of channel spread; the washed-out green regression is 28.
+COLOUR_CHROMA = 20
+
 #: how much of a crop's border is excluded from the ink statistics, as a
 #: fraction of each side, and never less than a pixel.  A card's box is
 #: occasionally off by one -- more likely on a JPEG's softer edges -- and a
@@ -164,14 +171,11 @@ EDGE_MARGIN = 0.04
 #: drawn at -- enlarging a picture must not be able to change its colours.
 COLOUR_FRACTION = 0.0075
 
-#: how far either side of that the reading is too close to call.  Both kinds
-#: of mistake live in this band and nowhere else: washed-out green ink on a
-#: twice-compressed screenshot ends up just under the line, and the chroma
-#: fringing along the white dragon's black rectangle ends up just over it.
-#: Neither is worth trying to separate by tightening the threshold -- there is
-#: no value that has them on opposite sides.  What they have in common is that
-#: the deck settles both, given they are handed on as doubt rather than
-#: swallowed as a decision.
+#: how far either side of that the reading is too close to call.  Washed-out
+#: coloured ink on a twice-compressed screenshot can end up close to this
+#: line, so the deck resolver must see that uncertainty rather than a forced
+#: decision.  Low-chroma JPEG fringe around black strokes is filtered before
+#: this count instead of being conflated with genuine coloured ink.
 COLOUR_UNCERTAIN = 2.0
 
 
@@ -190,13 +194,19 @@ def ink_reading(patch: np.ndarray) -> tuple[int | None, bool]:
         patch = patch[margin_y:-margin_y, margin_x:-margin_x]
     hsv = cv2.cvtColor(patch, cv2.COLOR_BGR2HSV)
     hue, saturation, value = hsv[:, :, 0], hsv[:, :, 1], hsv[:, :, 2]
+    chroma = np.ptp(patch, axis=2)
     pixels = patch.shape[0] * patch.shape[1]
     minimum = max(6, COLOUR_FRACTION * pixels)
 
     # Coloured ink is picked out by saturation, not by brightness: red print
     # is barely darker than the cream card behind it, so a "darker than the
-    # background" test misses it entirely.
-    coloured = (saturation > COLOUR_SATURATION) & (value > 60)
+    # background" test misses it entirely.  The absolute chroma floor rejects
+    # relative-saturation noise around near-black JPEG edges.
+    coloured = (
+        (saturation > COLOUR_SATURATION)
+        & (value > 60)
+        & (chroma > COLOUR_CHROMA)
+    )
     found = int(coloured.sum())
     certain = not minimum / COLOUR_UNCERTAIN <= found <= minimum * COLOUR_UNCERTAIN
 
