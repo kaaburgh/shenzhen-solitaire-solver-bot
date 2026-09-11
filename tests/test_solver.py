@@ -1,7 +1,7 @@
 import pytest
 
 from shenzhen.game import apply_move, deal
-from shenzhen.solver import Status, solve
+from shenzhen.solver import Status, _search_key, solve
 from shenzhen.textio import parse_board
 
 
@@ -105,6 +105,16 @@ def test_hard_dead_position_is_exhausted_without_reopening_states():
     )
     result = solve(state, max_nodes=70_000, time_limit=60)
     assert result.status is Status.UNSOLVABLE
+
+
+def test_search_key_has_the_same_position_symmetries_as_state_key():
+    state = deal(5)
+    a = state._replace(free=(0, None, -1))
+    b = state._replace(columns=tuple(reversed(state.columns)), free=(-1, 0, None))
+
+    assert a.key() == b.key()
+    assert _search_key(a) == _search_key(b)
+    assert _search_key(a) != _search_key(a._replace(flower=not a.flower))
 
 
 def test_budget_exhaustion_is_not_reported_as_unsolvable():
