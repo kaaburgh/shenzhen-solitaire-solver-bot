@@ -512,6 +512,17 @@ def _with_foundation(foundations: tuple[int, int, int], suit: int, rank: int) ->
     return (foundations[0], foundations[1], rank)
 
 
+def _with_free_cell(
+    free: tuple[int | None, ...], slot: int, value: int | None
+) -> tuple[int | None, ...]:
+    """Replace one of the fixed three free cells without a list round-trip."""
+    if slot == 0:
+        return (value, free[1], free[2])
+    if slot == 1:
+        return (free[0], value, free[2])
+    return (free[0], free[1], value)
+
+
 def apply_move(
     state: State, move: Move, *, auto: bool = True, checked: bool = True
 ) -> tuple[State, tuple[int, ...]]:
@@ -524,11 +535,13 @@ def apply_move(
     came straight out of :func:`legal_moves`; the search runs millions of
     these and the checks are the expensive part.
     """
-    columns = list(state.columns)
-    free = list(state.free)
+    columns = state.columns
+    free = state.free
     foundations = state.foundations
+    kind = move.kind
 
-    if move.kind == "tt":
+    if kind == "tt":
+        columns = list(columns)
         src, dst, n = move.a, move.b, move.n
         source = columns[src]
         target = columns[dst]
@@ -542,18 +555,21 @@ def apply_move(
         columns[src] = source[:-n]
         columns[dst] = target + source[-n:]
 
-    elif move.kind == "tf":
+    elif kind == "tf":
+        columns = list(columns)
         src = move.a
         source = columns[src]
-        if not source:
+        if checked and not source:
             raise IllegalMove(f"column {src} is empty")
-        slot = next((i for i, c in enumerate(free) if c is None), None)
-        if slot is None:
-            raise IllegalMove("no free cell available")
-        free[slot] = source[-1]
+        try:
+            slot = free.index(None)
+        except ValueError:
+            raise IllegalMove("no free cell available") from None
+        free = _with_free_cell(free, slot, source[-1])
         columns[src] = source[:-1]
 
-    elif move.kind == "ft":
+    elif kind == "ft":
+        columns = list(columns)
         slot, dst = move.a, move.b
         card = free[slot]
         target = columns[dst]
@@ -563,30 +579,35 @@ def apply_move(
             if target and not can_stack(card, target[-1]):
                 raise IllegalMove("card does not stack there")
         columns[dst] = target + (card,)
-        free[slot] = None
+        free = _with_free_cell(free, slot, None)
 
-    elif move.kind == "tF":
+    elif kind == "tF":
+        columns = list(columns)
         src = move.a
         source = columns[src]
-        if not source:
+        if checked and not source:
             raise IllegalMove(f"column {src} is empty")
         card = source[-1]
-        if not is_suit_card(card) or foundations[suit_of(card)] != rank_of(card) - 1:
+        if checked and (
+            not is_suit_card(card) or foundations[suit_of(card)] != rank_of(card) - 1
+        ):
             raise IllegalMove("card cannot go to its foundation yet")
         columns[src] = source[:-1]
-        foundations = _with_foundation(foundations, suit_of(card), rank_of(card))
+        foundations = _with_foundation(foundations, card // 9, card % 9 + 1)
 
-    elif move.kind == "fF":
+    elif kind == "fF":
         slot = move.a
         card = free[slot]
-        if card is None or is_locked(card) or not is_suit_card(card):
+        if checked and (card is None or is_locked(card) or not is_suit_card(card)):
             raise IllegalMove(f"free cell {slot} holds nothing collectable")
-        if foundations[suit_of(card)] != rank_of(card) - 1:
+        if checked and foundations[suit_of(card)] != rank_of(card) - 1:
             raise IllegalMove("card cannot go to its foundation yet")
-        free[slot] = None
-        foundations = _with_foundation(foundations, suit_of(card), rank_of(card))
+        free = _with_free_cell(free, slot, None)
+        foundations = _with_foundation(foundations, card // 9, card % 9 + 1)
 
-    elif move.kind == "dr":
+    elif kind == "dr":
+        columns = list(columns)
+        free = list(free)
         colour = move.a
         if checked and not can_collapse_dragons(state, colour):
             raise IllegalMove("those dragons cannot be collapsed")
@@ -603,7 +624,7 @@ def apply_move(
         free[slot] = locked_cell(colour)
 
     else:  # pragma: no cover -- guarded by the Move constructors above
-        raise IllegalMove(f"unknown move kind: {move.kind!r}")
+        raise IllegalMove(f"unknown move kind: {kind!r}")
 
     nxt = State(
         columns=tuple(columns),
