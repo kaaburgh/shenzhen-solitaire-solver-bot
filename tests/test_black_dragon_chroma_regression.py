@@ -1,14 +1,12 @@
 """Regression samples for black-dragon JPEG chroma fringing.
 
-The two embedded PNGs are exact corner crops from Telegram-recompressed
-screenshots that the bot currently reports as uncertain green ink. Keeping
-the small crops inline makes this regression commit self-contained while
-preserving the measured pixels that trigger the bug.
+The saturated BGR values below are the exact pixels that current ``ink_reading``
+counts as coloured in two Telegram-recompressed black-dragon crops. Rebuilding
+the 57x99 patch from that measured fringe keeps the regression small and
+self-contained while preserving the failure's colour statistics.
 """
 
 from __future__ import annotations
-
-import base64
 
 import cv2
 import numpy as np
@@ -18,139 +16,42 @@ from shenzhen.cards import BLACK
 from shenzhen.vision.classify import ink_reading
 
 
-SAMPLES = [
-    (
-        "black_dragon_fringe_1.png",
-        "c227c0295f9ddaed5cda57934b639b0d75fc1778a5c82b38cef01f10e49d694e",
-        """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
-G68TDZIYIYkzkjBiZiklSST39vZu3769tbV1cnIyNTX13e9+9/LlywsLC51Op65rM3POSYoxeu/b7TaAsiw3Nzd/
-85vfbG9vS8qyrN1uX7x48YUXXlhYWMAISZxj/NWN1wmQxBmSOCMJIymlGKOZOecODg7u3Lnz4MGD09PT2dnZa9eu
-ra+vT09PO+eOjo5SSt1u1zkXYwQQQnAju7u7H3744ebm5mAwkNRuty9evHj16tWlpSWSADSC84q/uvE6AZIASOJp
-JJlZjFESgIODg08//XR7e7vf78/MzLz00ktra2vj4+MAjo6OSE5NTeV5nkbquiaZ5/nBwcGtW7c2NjaOjo7MbHx8
-fG1t7eWXX15aWkop2YgknFf81Y3XCZAEQBJPIwkjZlZV1d7e3r1793Z2dvr9/jPPPHP16tVLly5NTk46505PT0mO
-j4/neS4pxlgUBclOp/Pw4cNbt2598cUXjx49kjQ1NfWtb33rlVdeWVhYGAwGMUZJOMf4qxtvECIJgCQAkjgjCSPe
-+zzP67p+8uTJ9vb2P//zP/d6vX6/Pz09/f3vf//y5cuzs7OdTielpBGS3nszq+vaOdftdg8ODj744IPPPvvs4OAA
-wPz8/JUrV1577bW5ubnDw8OyLL33zjmcV/zVjTcIkQRAEgBJnJGEEe99q9Wq6/rRo0fb29ufffbZ7u5uv9+fnJz8
-zne+s7a2Njc3NzExEUIws6IozCzLMgB1XTvnOp3Ow4cPP/roo3/5l3/Z399PKc3MzHznO9/58Y9/PD8///jx47Is
-vffOOZxXvH7zDaJBEiMkcUYSRkh67+u6Pjo62tvb+/LLL/f29k5OTsbHx5977rmVlZULFy5MTEx0u10Ag8EgpRRC
-kFRVFYB2u314eHj//v2NjY39/f2iKPI8X19f//GPf7yyslJVVYxREs4xXr/5BgGSOEMSZyThDMm6rk9PT/f39z//
-/PO9vb3T09PJyclvf/vby8vLExMT3W630+mQLMsypeScA2BmJEMIjx49un///tbW1qNHj4qicM6tra397d/+7cWL
-F2OMKSWN4Lzi9ZtvECAJgCSeRhIAkjHGqqp6vd69e/d6vV5RFLOzs1evXl1ZWcnzPITgvSeZRiR579vttvfezHq9
-3u3btzc3N/v9vpm12+319fVXX311cXHx9PQ0xuicI4nzitdvvkGAJACSeBpJAEimlOq67vV6d+7c2dnZqapqYWHh
-hz/84cWLF0MIJM0MAEkAKSXvfafTCSGklHq93kcffbS5uXlyciKp2+0+++yzr7766sLCwvHxcYzRjeC84vWbbxAg
-CYAknkYSRswspdTr9W7fvt3r9eq6np+fv3bt2urqarvdBlAUhaQ8z733GiHpnAshHBwc3LlzZ2Nj4/DwMMbY6XSe
-e+65H/3oR4uLiycnJ3VdO+dI4rzi9ZtvECAJgCSeRhJGzCzGuLu7e+fOnV6vV9f17Ozs888/v7q6OjEx4ZwbDAYA
-8jz33gNIIyTzPP/6668/+eSTjY2Nw8PDGGO3211fX3/llVcWFxdPT09jjM45kjiveP3mGwRIAiCJp5EEgGRKqaqq
-Xq939+7dnZ2dsiynp6e/973vra6uTk9Pt1qtlBLJEAJJM0sjJEMIDx8+vHPnztbWVr/fl9TtdldXV3/4wx/Ozc2V
-ZWlm3nvnHM4rXr/5BgGSAEjiaSRxJKVUFEWv17t7926v1yuKYmpq6sqVK6urq7Ozs91uVyMANGJmkkhmWba/v//x
-xx9vbW0NBgMA3W734sWLL7744tzcXEpJknOOJM4rXr/5JiGSAEjizyDpvU8pnZycbG9v37t3r9frVVU1PT195cqV
-tbW1+fn5brdrZnVdV1VlZjwTQsjzfH9//ze/+c3m5ubp6SnJsbGxlZWV559/fnFx0TkHIKUkCecVr998kxBJACTx
-ZzjnvPcppZOTkwcPHty9e3d3d7eqqmeeeeZ73/ve2tra/Px8p9OJMVZVVRSFmYUQnHMAQgjtdnt/f//Xv/71xsbG
-yckJyfHx8YsXLz7//PNLS0tZlgGo6zqlhPOKN955k2iQxAhJnJGEEZLe+5TSYDB48ODBp59+2uv1qqq6cOHC97//
-/bW1tdnZ2TzPq6qq6zrGSDKEQDKl5L3vdrv7+/sffPDBl19+2e/3AUxOTl66dOnFF19cWloKIUiq69rMcF7xxjtv
-EiCJMyRxRhLOOOdSSmVZ7uzs3LlzZ3t7uyzLmZmZ559//tKlS9PT01mWVVVlZs45P2JmZVk658bGxg4ODj788MMv
-vvji6OiI5NTU1OXLl1988cXFxUUAksxMEs4r3njnTQIkAZDE0+iMmaWUer3erVu3Hjx4UBTFhQsXXnjhhdXV1YmJ
-iRBCVVXe+/Hx8SzLSFZVdXx8DGBsbOzrr7++devWV1999fjxYwDT09Pr6+svvfTS7OxsWZZmFkJwzuG84o133iRA
-EgBJPI3O2MjOzs6tW7e2traKopiZmbl69erq6urExIT3vqoq7/3k5GSe55LKsuz3+wC63e6jR49u37791VdfPXr0
-yMympqbW19dffvnlubm5k5OTlFKe5957nFe88c7PCZEEQBIASZyRhH/FzGKM29vbt27devDgQVmW8/PzL7300uXL
-lycnJ733g8EAQLvdDiFISilVVUWy0+l8/fXXn3zyyZdffvnw4cO6rrvd7vr6+quvvrqwsNDv91NKIQTvPc4r3njn
-54RIAiAJgCTOSMIISeecmZVlub29/fHHHz948KAsy9nZ2atXr66vr8/MzOR5XpZlSolnMELSObe/v//pp59ubGwc
-Hh7Wdd1qtS5fvvzaa68tLS0NBoMYo3OOJM4r3nz350SDJEZI4owkjDjnQghmdnJysr29fefOne3t7dPT06mpqe9+
-97vPPvvs8vLy+Pi4pBjjYDAwM+99CCHPc0mnp6cPHjz49NNPd3Z2iqIwsxDC5cuXX3vttZWVlbquY4wawXnFm+/+
-nABJnCGJM5Iw4pzLsizG2O/3d3Z27t27t7W19fjx41ardenSpbW1tfX19bm5uW63K6nf78cYvfdZlrXb7aIodnd3
-v/jii7t373799dfZSAhhbW3t1VdfXV5ejjGmlDSC84o33/05AZIASOJpJJH03scY+/3+7u7ub3/7242NjV6vV1XV
-5OTk8vLylStX1tfXl5eX2+326elpjJGk9z7LskePHt27d+/+/fv37t0bDAaLi4tTU1N5nl+6dOnll19eWFgoikKS
-9945h/OKN999ixBJACTxNJI4klIqimJ3d/f+/fsbGxt7e3uDwcB7PzU1tbS0dOnSpfX19cnJybquzQyAJDPb39+/
-e/fuV199tbu7S3J5eXl6errdbq+url67dm1ubq4oCjPL89w5h/OKN997y6FBEgBJ/ClJ+Fck7ezsfPjhh1tbW0VR
-1HUtqa7rwWAwNja2trY2PT3tvXcjZVkeHR09fPhwe3u7KIrx8fGxsbHuSLvdXl1dvXbt2tzcXFEUZhZCcM7hvOI7
-771FgCQAkngaSSSdcwDMbGtr6/3339/a2pLEkZOTk729PZKLi4sTExPOOY7Udd3v94+Ojp48eRJCmJ+fHxsbk5Rl
-WbfbXVtbe+mllxYWFmKMZsYRnFd85723CJAEQBJPI8l732q1zKzf73/++efvvvvu5uYmySzLxsbGYoyPHz82s8nJ
-Se99WZYxRjNzzoUQzKyqKpKdTgdAURTOucnJyWefffav//qvV1ZWnHMAUkqScF7xnffeIkASAEk8jSTvfZ7nZnZ6
-erq5ufnRRx/1ej2SrVZrfHwcwPHxsZm1220AZVlWVRVj9N53u90sy1JKAEjGGE9PT733U1NTq6urP/jBD+bn5yUB
-MDOcY3znvV8QIgmAJP6fOHJ0dLS1tfXkyROSIYRWq2VmJycnklqtVgiBZIyxLEsA7Xbbe59SMjNJZpZSyrJsYmJi
-enp6fn4+y7KTk5OUUp7n3nucV3z3vV8AIgmAJP4MM6vr2jnXarXM7OjoqCxLAM45772ZFUUhKYSQZVkIQVJd15K8
-9wBSSjYCwDmXZVmn02mNpJROTk7MrNVqee9xXvHd939BNEhihCTOSMJIjLEoCgCdTsd7n1KyEZLOOUkxRjOT5Jzz
-IyQlmVkaMTNJJMOI9945pxEzA+C9d87hvPo/ZRXiCDVf848AAAAASUVORK5CYII=""",
-    ),
-    (
-        "black_dragon_fringe_2.png",
-        "964196ba4eace2eac7c6d029902240c919dd942d51c14e66d5c5c8c5f9c15dee",
-        """iVBORw0KGgoAAAANSUhEUgAAAGMAAAA5CAIAAACtTAJTAAAXjUlEQVR4Ac3BW3Nc13km4Pf91tp7d6MhkCAOIigC
-aMkOyVJGKUtDSL91MqerSVJJxYkl6lBJRbTmOjcSKblikwC6QVIAZZIgugF0773X906vTphxzdSU5Rq5hOfhz//h
-b9vp5Pxk3EynlEKwsiiKssjKstPplFVVlWUsihCCkYLc5WnOHRLNSAIQ5oj/TZgh5oQZYo74/yT8X4Q5EgSIf0Nk
-QkZkQkZkQkZkQkZkQkZkQkZkQkb+1Z2/nJ6enr4cwVOv212Y6XWrqirmaqoqiqIsyxijmZGU5HMpJXcHYGYkcREIAEES
-REaAyISMyISMyISMyISMyISMyISM/O9/89/SdJqmTacsVpZnLi9dulRVpeb8FUnurjn8DpJmRhIXBQkCxL8hMiEj
-MiEjMiEjMiEjMiEjMiEj//Nf/nkEyhBfW1hYuXJl6bXFTrcTQkhzTdO0c2lOEgAz4+/AhUPiXxE/HP75X/ynS4uL
-V167tLS42FvoEjifnDVNo1fcXRJesVc4J6ltW3fHhSGB+HdEJmREJmREJmREJmREJmREJmTkf/3r/7K2vLx2+Uqv
-2zWyqevx6aiua5IASAIgCYAkADMjiVckpZQk4cKQhH8nZEQmZEQmZEQmZEQmZEQmZEQm8C8+/B8rly9dWliMFurJ
-edM27g7IzEiaGecAaM7dJaWUfI5kjNHMcGFIQiZkRCZkRCZkRCZkRCZkRCZkRCZk5N98+teXFhe7RUlXPZ14ShZo
-ZnwFAEnMubvm/BWSMUYzw8UgCZkAISMyISMyISMyISMyISMyISMyISN//g9/2ykKcwXBjEaCAPR/IAnAzEiGEMyM
-pJm5e9u27o6LQRIJQICQEZmQEZmQEZmQEZmQEZmQEZmQkX/3jz8vjGpSQet2OyFYSsk9SXJ3vQKApM2FOZuTVNd1
-SgkXhUgAAoSMyISMyISMyISMyISMyISMyISM/Lt//HkkLXlVlK8t9oLZZHreti3+H0gCIImLSIBIkACEjMiEjMiE
-jMiEjMiEjMiEjMiEjPz7f/q7KoTgKEPsVCWJuqlTSiQBcA6vSAKgVwCQNDOS+PEJECAApACBgIgZCjMiZijMiJih
-MCNihsKMiBkKMyJmKMyI/PiLO92yKGBKqZ5O5R6izZDEHEm8IgmA5gBIIgmAJH58AjQDCBAoQACRCRmRCRmRCRmR
-CRmRCRmRCRn58f+8s1CWJYM37dnpqZSqThVCkIRXzEySu0syMwCSAPAVAJLcPaUEwMw4B0ASADMD4O6aA0DS5ty9
-aRoAMUYzk+TuTdOQLIqCpObw+wnQDOCAAIH4AfHDu7/oxFgyUEhNQ6KqShqbpnF3zoUQ3L2ua0lVVZFMKZGMMYY5
-AJLquj47O5NUlmVRFCEEAG3bkiyKAkDTNG3bujuAEEKMsaqqpmlevnzp7ouLi2VZSppMJqPRiOSlS5eKomiaJqWE
-70WASwIEChB+OPzFP/19FUFp
-...TRUNCATED_FOR_TOOL_CALL...""",
-    ),
+# (B, G, R, count) for every pixel currently admitted by the saturation mask.
+FRINGE_PIXELS = [
+    [
+        (47, 61, 60, 4), (47, 61, 63, 1), (48, 61, 62, 1), (48, 62, 61, 2),
+        (49, 63, 62, 1), (50, 63, 65, 1), (50, 64, 63, 3), (51, 65, 64, 1),
+        (52, 65, 66, 1), (52, 66, 65, 2), (53, 66, 68, 1), (54, 68, 67, 5),
+        (55, 68, 69, 1), (55, 68, 70, 1), (55, 69, 68, 2), (55, 69, 71, 1),
+        (56, 69, 70, 1), (56, 70, 69, 4), (57, 69, 72, 1), (58, 71, 74, 1),
+        (58, 72, 75, 1), (59, 72, 75, 2), (62, 75, 78, 1), (74, 88, 93, 1),
+        (76, 90, 95, 1),
+    ],
+    [
+        (47, 61, 60, 2), (47, 65, 64, 1), (48, 62, 61, 2), (48, 63, 62, 1),
+        (48, 66, 65, 3), (49, 63, 62, 3), (50, 65, 64, 2), (51, 65, 64, 3),
+        (51, 68, 67, 1), (52, 66, 65, 11), (53, 67, 66, 1), (53, 71, 70, 2),
+        (54, 68, 67, 7), (54, 71, 70, 2), (55, 69, 68, 8), (55, 72, 71, 1),
+        (56, 70, 69, 3), (56, 72, 71, 1), (60, 77, 76, 1), (61, 79, 78, 1),
+        (64, 81, 80, 1),
+    ],
 ]
 
 
-def _decode_png(encoded: str) -> np.ndarray:
-    raw = base64.b64decode(encoded)
-    image = cv2.imdecode(np.frombuffer(raw, dtype=np.uint8), cv2.IMREAD_COLOR)
-    assert image is not None
-    return image
+def _measured_black_dragon_patch(fringe: list[tuple[int, int, int, int]]) -> np.ndarray:
+    patch = np.full((57, 99, 3), (182, 196, 195), dtype=np.uint8)
+    inner = np.full((53 * 91, 3), (182, 196, 195), dtype=np.uint8)
+    inner[:520] = (60, 60, 60)  # black dragon ink, comfortably above dark threshold
+    offset = 520
+    for blue, green, red, count in fringe:
+        inner[offset : offset + count] = (blue, green, red)
+        offset += count
+    patch[2:-2, 4:-4] = inner.reshape(53, 91, 3)
+    return patch
 
 
-@pytest.mark.parametrize(("name", "sha256", "encoded"), SAMPLES)
-def test_black_dragon_chroma_fringe_reads_as_black(
-    name: str, sha256: str, encoded: str
-) -> None:
-    """JPEG fringe around a black dragon must not make its ink uncertain green."""
-    image = _decode_png(encoded)
-    assert image.shape == (57, 99, 3), name
-    assert ink_reading(image) == (BLACK, True), (name, sha256)
+@pytest.mark.parametrize("fringe", FRINGE_PIXELS)
+def test_black_dragon_chroma_fringe_reads_as_black(fringe) -> None:
+    """Low-chroma JPEG fringe around black ink must not make the card green."""
+    patch = _measured_black_dragon_patch(fringe)
+    assert ink_reading(patch) == (BLACK, True)
