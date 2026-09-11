@@ -6,8 +6,6 @@ the 57x99 patch from that measured fringe keeps the regression small and
 self-contained while preserving the failure's colour statistics.
 """
 
-from __future__ import annotations
-
 import numpy as np
 import pytest
 
