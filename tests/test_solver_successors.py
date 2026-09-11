@@ -1,5 +1,6 @@
 import random
 
+import shenzhen.solver as solver_module
 from shenzhen._solver_successors import successors_from_settled
 from shenzhen.cards import BLACK, FLOWER, GREEN, RED, make_card
 from shenzhen.game import Move, State, apply_move, deal, legal_moves, successors
@@ -60,3 +61,28 @@ def test_solver_successors_resolve_a_flower_moved_out_of_a_free_cell():
 
     assert actual == expected
     assert actual[1].flower is True
+
+
+def test_solve_uses_general_successors_for_an_unsettled_initial_state(monkeypatch):
+    state = State(
+        columns=((make_card(GREEN, 1),), (), (), (), (), (), (), ()),
+        free=(None, None, None),
+        foundations=(0, 0, 0),
+        flower=True,
+    )
+    calls: list[str] = []
+
+    monkeypatch.setattr(
+        solver_module,
+        "successors",
+        lambda current: calls.append("general") or iter(()),
+    )
+    monkeypatch.setattr(
+        solver_module,
+        "successors_from_settled",
+        lambda current: calls.append("settled") or iter(()),
+    )
+
+    solver_module.solve(state, max_nodes=1, time_limit=60)
+
+    assert calls == ["general"]
