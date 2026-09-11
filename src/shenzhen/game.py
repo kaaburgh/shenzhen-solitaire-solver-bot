@@ -46,6 +46,13 @@ NUM_FREE_CELLS = 3
 # canonical ordering puts empty cells last.
 _EMPTY_SORT_KEY = 99
 
+# Keep a selected set of destination columns in the same left-to-right order
+# as a full tableau scan, without paying to test all eight columns every time.
+_DESTINATIONS_BY_MASK = tuple(
+    tuple(i for i in range(NUM_COLUMNS) if mask & (1 << i))
+    for mask in range(1 << NUM_COLUMNS)
+)
+
 
 class Move(NamedTuple):
     """A single player move.
@@ -391,11 +398,12 @@ def legal_moves(state: State) -> list[Move]:
             foundation_free.append(i)
 
     # Per-column metadata already needs every exposed card.  Fold dragon
-    # exposure, manual foundation candidates, and first-empty discovery into
-    # that pass instead of rescanning the tableau for each of them.
+    # exposure, manual foundation candidates, first-empty discovery, and the
+    # destination rank index into that pass instead of rescanning the tableau.
     first_empty_column = None
     runs: list[int] = []
     accepts: list[tuple[int, int] | None] = []  # (required rank, forbidden suit)
+    destination_masks = [0] * 9
     foundation_columns: list[int] = []
     for i, col in enumerate(columns):
         if not col:
@@ -408,7 +416,9 @@ def legal_moves(state: State) -> list[Move]:
         runs.append(max_run_length(col))
         top = col[-1]
         if top < DRAGON_BASE:
-            accepts.append((top % 9, top // 9))  # rank_of(top) - 1, suit_of(top)
+            need = (top % 9, top // 9)
+            accepts.append(need)  # rank_of(top) - 1, suit_of(top)
+            destination_masks[need[0]] |= 1 << i
             if foundations[top // 9] == top % 9:
                 foundation_columns.append(i)
         else:
@@ -426,53 +436,58 @@ def legal_moves(state: State) -> list[Move]:
     for i in foundation_free:
         moves.append(Move("fF", i))
 
-    # Tableau -> tableau.
+    empty_column_mask = 0 if first_empty_column is None else 1 << first_empty_column
+
+    # Tableau -> tableau.  Only destinations whose exposed rank can accept a
+    # head from the movable run are candidates; the mask table preserves the
+    # original left-to-right destination order.
     for src, col in enumerate(columns):
         run = runs[src]
         if run == 0:
             continue
         length = len(col)
         top = col[-1]
-        # A run's ranks increase by one per extra card taken, so the number of
-        # cards needed to reach a given rank follows directly -- no scanning.
         base_rank = top % 9 + 1 if top < DRAGON_BASE else None
 
-        for dst in range(NUM_COLUMNS):
-            if dst == src:
-                continue
+        candidate_mask = empty_column_mask
+        if base_rank is not None:
+            for need_rank in range(base_rank, min(base_rank + run, 9)):
+                candidate_mask |= destination_masks[need_rank]
+        candidate_mask &= ~(1 << src)
+
+        for dst in _DESTINATIONS_BY_MASK[candidate_mask]:
             target = columns[dst]
             if target:
-                need = accepts[dst]
-                if need is None or base_rank is None:
-                    continue
-                need_rank, forbidden_suit = need
+                need_rank, forbidden_suit = accepts[dst]
                 n = need_rank - base_rank + 1
-                if 1 <= n <= run:
-                    head = col[length - n]
-                    if head // 9 != forbidden_suit:
-                        moves.append(Move("tt", src, dst, n))
-            elif dst == first_empty_column:
+                head = col[length - n]
+                if head // 9 != forbidden_suit:
+                    moves.append(Move("tt", src, dst, n))
+            else:
                 for n in range(1, run + 1):
                     # Relocating a whole column into an empty one changes
                     # nothing but the column index.
                     if n != length:
                         moves.append(Move("tt", src, dst, n))
 
-    # Free cell -> tableau.
+    # Free cell -> tableau.  Reuse the same rank index: a free-cell card can
+    # only stack on one required rank, plus the first interchangeable empty.
     for i, cell in enumerate(free):
         if cell is None or cell < 0:
             continue
         cell_rank = cell % 9 + 1 if cell < DRAGON_BASE else None
         cell_suit = cell // 9
-        for dst in range(NUM_COLUMNS):
-            if not columns[dst]:
-                if dst == first_empty_column:
-                    moves.append(Move("ft", i, dst))
+        candidate_mask = empty_column_mask
+        if cell_rank is not None and cell_rank < 9:
+            candidate_mask |= destination_masks[cell_rank]
+
+        for dst in _DESTINATIONS_BY_MASK[candidate_mask]:
+            target = columns[dst]
+            if not target:
+                moves.append(Move("ft", i, dst))
                 continue
             need = accepts[dst]
-            if need is None or cell_rank is None:
-                continue
-            if cell_rank == need[0] and cell_suit != need[1]:
+            if cell_suit != need[1]:
                 moves.append(Move("ft", i, dst))
 
     # Tableau -> free cell.  All empty cells are interchangeable, so only the
