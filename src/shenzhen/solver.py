@@ -20,7 +20,7 @@ from enum import StrEnum
 
 from ._solver_successors import successors_from_settled
 from .cards import NUM_CARD_IDS, SUITS, is_locked, locked_colour
-from .game import Move, State
+from .game import Move, State, auto_resolve, successors
 
 DEFAULT_MAX_NODES = 400_000
 DEFAULT_TIME_LIMIT = 20.0
@@ -120,6 +120,12 @@ def solve(
         return SolveResult(Status.SOLVED, [], 0, 0.0)
 
     start_key = _search_key(state)
+    # The normal bot/parser path hands us a settled position.  Keep solve()'s
+    # old behavior for a direct caller that does not: use the general successor
+    # path for that first expansion, after which every generated child is
+    # settled and can use the solver fast path.
+    start_settled = auto_resolve(state)[0] is state
+
     # key -> (cost so far, parent key, move that got here, state, collected)
     seen: dict[tuple, tuple[int, tuple | None, Move | None, State, tuple[int, ...]]] = {
         start_key: (0, None, None, state, ())
@@ -149,7 +155,12 @@ def solve(
         current = entry[3]
         nodes += 1
 
-        for move, nxt, collected in successors_from_settled(current):
+        if key == start_key and not start_settled:
+            child_iter = successors(current)
+        else:
+            child_iter = successors_from_settled(current)
+
+        for move, nxt, collected in child_iter:
             nxt_key = _search_key(nxt)
             cost = g + 1
             if nxt_key in expanded:
