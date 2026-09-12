@@ -85,6 +85,54 @@ def heuristic(state: State) -> int:
     return score
 
 
+def _wanted_in_column(column: tuple[int, ...], foundations: tuple[int, int, int]) -> int:
+    """How many of the three foundation-next cards are in ``column``."""
+    f0, f1, f2 = foundations
+    return (
+        (f0 < 9 and f0 in column)
+        + (f1 < 9 and 9 + f1 in column)
+        + (f2 < 9 and 18 + f2 in column)
+    )
+
+
+def _heuristic_after_move(
+    before: State,
+    before_score: int,
+    move: Move,
+    after: State,
+    collected: tuple[int, ...],
+) -> int:
+    """Update the heuristic from a generated move when that is cheaper.
+
+    With no automatic collection and unchanged foundations, tableau moves have
+    a very small exact delta.  Moving ``n`` cards removes ``n`` blockers from
+    every wanted card left in the source and adds ``n`` blockers to every
+    wanted card already in the destination.  Moving through a free cell adds
+    or removes its one occupied-cell penalty as well.
+
+    Foundation moves, dragon collapse, and automatic collection can change
+    more of the score at once, so those comparatively rare children keep the
+    full calculation.
+    """
+    if collected or before.foundations != after.foundations:
+        return heuristic(after)
+
+    kind = move.kind
+    foundations = before.foundations
+    if kind == "tt":
+        n = move.n
+        return before_score + n * (
+            _wanted_in_column(before.columns[move.b], foundations)
+            - _wanted_in_column(after.columns[move.a], foundations)
+        )
+    if kind == "tf":
+        return before_score + 1 - _wanted_in_column(after.columns[move.a], foundations)
+    if kind == "ft":
+        return before_score - 1 + _wanted_in_column(before.columns[move.b], foundations)
+
+    return heuristic(after)
+
+
 def _search_key(state: State) -> tuple:
     """Canonical position identity shaped for the solver's hot dictionaries.
 
@@ -135,7 +183,10 @@ def solve(
     # have already done; keep lower-cost updates only while it is still queued.
     expanded: set[tuple] = set()
     counter = 0
-    queue: list[tuple[int, int, int, tuple]] = [(heuristic(state) * HEURISTIC_WEIGHT, 0, 0, start_key)]
+    start_h = heuristic(state)
+    queue: list[tuple[int, int, int, tuple]] = [
+        (start_h * HEURISTIC_WEIGHT, 0, 0, start_key)
+    ]
 
     nodes = 0
     exhausted = True
@@ -145,7 +196,7 @@ def solve(
             exhausted = False
             break
 
-        _, g, _, key = heapq.heappop(queue)
+        priority, g, _, key = heapq.heappop(queue)
         if key in expanded:
             continue
         entry = seen[key]
@@ -153,6 +204,7 @@ def solve(
             continue  # stale queue entry
         expanded.add(key)
         current = entry[3]
+        current_h = (priority - g) // HEURISTIC_WEIGHT
         nodes += 1
 
         if key == start_key and not start_settled:
@@ -179,9 +231,8 @@ def solve(
                 )
 
             counter += 1
-            heapq.heappush(
-                queue, (cost + HEURISTIC_WEIGHT * heuristic(nxt), cost, counter, nxt_key)
-            )
+            nxt_h = _heuristic_after_move(current, current_h, move, nxt, collected)
+            heapq.heappush(queue, (cost + HEURISTIC_WEIGHT * nxt_h, cost, counter, nxt_key))
 
     status = Status.UNSOLVABLE if exhausted else Status.UNKNOWN
     return SolveResult(status, [], nodes, time.monotonic() - started)
