@@ -236,7 +236,9 @@ def _prepare_generated_move(
 
 
 def prepared_successors_from_settled(
-    state: State, parent_key: tuple
+    state: State,
+    parent_key: tuple,
+    run_cache: dict[tuple[int, ...], int] | None = None,
 ) -> Iterator[_PreparedSuccessor]:
     """Generate exact child keys before constructing stable child States.
 
@@ -244,8 +246,11 @@ def prepared_successors_from_settled(
     yield ``nxt=None`` plus components sufficient to materialize the State if
     the search accepts the key. Moves that can trigger automatic resolution
     are materialized immediately and carry ``parts=None``.
+
+    A solve may also pass a shared ``run_cache`` so immutable column tuples do
+    not have their movable suffix rescanned in every canonical position.
     """
-    for move in legal_moves(state):
+    for move in legal_moves(state, _run_cache=run_cache):
         key, nxt, collected, parts = _prepare_generated_move(state, parent_key, move)
         yield move, key, nxt, collected, parts
 
