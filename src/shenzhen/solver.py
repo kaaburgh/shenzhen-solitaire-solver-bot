@@ -18,8 +18,12 @@ import time
 from dataclasses import dataclass, field
 from enum import StrEnum
 
-from ._solver_successors import successors_from_settled
-from .cards import NUM_CARD_IDS, SUITS, is_locked, locked_colour
+from ._solver_successors import (
+    _materialize_prepared,
+    _search_key_parts,
+    prepared_successors_from_settled,
+)
+from .cards import SUITS, is_locked, locked_colour
 from .game import Move, State, auto_resolve, successors
 
 DEFAULT_MAX_NODES = 400_000
@@ -134,25 +138,8 @@ def _heuristic_after_move(
 
 
 def _search_key(state: State) -> tuple:
-    """Canonical position identity shaped for the solver's hot dictionaries.
-
-    ``State.key`` groups the same components into nested tuples.  Flattening
-    them means dict/set hashing does not re-enter wrapper tuples around the
-    columns, free cells and foundations for every lookup.  Free cells are
-    always three entries, so a tiny sorting network also avoids allocating the
-    generator and temporary tuple used by the general-purpose state key.
-    """
-    a, b, c = state.free
-    a = NUM_CARD_IDS if a is None else a
-    b = NUM_CARD_IDS if b is None else b
-    c = NUM_CARD_IDS if c is None else c
-    if a > b:
-        a, b = b, a
-    if b > c:
-        b, c = c, b
-    if a > b:
-        a, b = b, a
-    return (*sorted(state.columns), a, b, c, *state.foundations, state.flower)
+    """Canonical position identity shaped for the solver's hot dictionaries."""
+    return _search_key_parts(state.columns, state.free, state.foundations, state.flower)
 
 
 def solve(
@@ -187,6 +174,9 @@ def solve(
     queue: list[tuple[int, int, int, tuple]] = [
         (start_h * HEURISTIC_WEIGHT, 0, 0, start_key)
     ]
+    # Column tuples are immutable and recur across many canonical positions.
+    # Keep this cache local to one solve so it cannot retain old games.
+    run_cache: dict[tuple[int, ...], int] = {}
 
     nodes = 0
     exhausted = True
@@ -208,18 +198,28 @@ def solve(
         nodes += 1
 
         if key == start_key and not start_settled:
-            child_iter = successors(current)
+            child_iter = (
+                (move, _search_key(nxt), nxt, collected, None)
+                for move, nxt, collected in successors(current)
+            )
         else:
-            child_iter = successors_from_settled(current)
+            child_iter = prepared_successors_from_settled(current, key, run_cache)
 
-        for move, nxt, collected in child_iter:
-            nxt_key = _search_key(nxt)
+        for move, nxt_key, nxt, collected, parts in child_iter:
             cost = g + 1
             if nxt_key in expanded:
                 continue
             known = seen.get(nxt_key)
             if known is not None and known[0] <= cost:
                 continue
+
+            # Stable generated moves carry only the components needed for their
+            # canonical key until they survive deduplication. This is where the
+            # majority of rejected children avoid constructing a State.
+            if nxt is None:
+                assert parts is not None
+                nxt = _materialize_prepared(parts)
+
             seen[nxt_key] = (cost, key, move, nxt, collected)
 
             if nxt.is_won:
