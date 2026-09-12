@@ -18,8 +18,12 @@ import time
 from dataclasses import dataclass, field
 from enum import StrEnum
 
-from ._solver_successors import successors_from_settled
-from .cards import NUM_CARD_IDS, SUITS, is_locked, locked_colour
+from ._solver_successors import (
+    _materialize_prepared,
+    _search_key_parts,
+    prepared_successors_from_settled,
+)
+from .cards import SUITS, is_locked, locked_colour
 from .game import Move, State, auto_resolve, successors
 
 DEFAULT_MAX_NODES = 400_000
@@ -85,26 +89,57 @@ def heuristic(state: State) -> int:
     return score
 
 
-def _search_key(state: State) -> tuple:
-    """Canonical position identity shaped for the solver's hot dictionaries.
+def _wanted_in_column(column: tuple[int, ...], foundations: tuple[int, int, int]) -> int:
+    """How many of the three foundation-next cards are in ``column``."""
+    f0, f1, f2 = foundations
+    return (
+        (f0 < 9 and f0 in column)
+        + (f1 < 9 and 9 + f1 in column)
+        + (f2 < 9 and 18 + f2 in column)
+    )
 
-    ``State.key`` groups the same components into nested tuples.  Flattening
-    them means dict/set hashing does not re-enter wrapper tuples around the
-    columns, free cells and foundations for every lookup.  Free cells are
-    always three entries, so a tiny sorting network also avoids allocating the
-    generator and temporary tuple used by the general-purpose state key.
+
+def _heuristic_after_move(
+    before: State,
+    before_score: int,
+    move: Move,
+    after: State,
+    collected: tuple[int, ...],
+) -> int:
+    """Update the heuristic from a generated move when that is cheaper.
+
+    With no automatic collection and unchanged foundations, tableau moves have
+    a very small exact delta.  Moving ``n`` cards removes ``n`` blockers from
+    every wanted card left in the source and adds ``n`` blockers to every
+    wanted card already in the destination.  Moving through a free cell adds
+    or removes its one occupied-cell penalty as well.
+
+    Foundation moves, dragon collapse, and automatic collection can change
+    more of the score at once, so those comparatively rare children keep the
+    full calculation.
     """
-    a, b, c = state.free
-    a = NUM_CARD_IDS if a is None else a
-    b = NUM_CARD_IDS if b is None else b
-    c = NUM_CARD_IDS if c is None else c
-    if a > b:
-        a, b = b, a
-    if b > c:
-        b, c = c, b
-    if a > b:
-        a, b = b, a
-    return (*sorted(state.columns), a, b, c, *state.foundations, state.flower)
+    if collected or before.foundations != after.foundations:
+        return heuristic(after)
+
+    kind = move.kind
+    foundations = before.foundations
+    if kind == "tt":
+        n = move.n
+        return before_score + n * (
+            _wanted_in_column(before.columns[move.b], foundations)
+            - _wanted_in_column(after.columns[move.a], foundations)
+        )
+    if kind == "tf":
+        return before_score + 1 - _wanted_in_column(after.columns[move.a], foundations)
+    if kind == "ft":
+        return before_score - 1 + _wanted_in_column(before.columns[move.b], foundations)
+
+    return heuristic(after)
+
+
+def _search_key(state: State) -> tuple:
+    """Canonical position identity shaped for the solver's hot dictionaries."""
+    return _search_key_parts(state.columns, state.free, state.foundations, state.flower)
 
 
 def solve(
@@ -135,7 +170,13 @@ def solve(
     # have already done; keep lower-cost updates only while it is still queued.
     expanded: set[tuple] = set()
     counter = 0
-    queue: list[tuple[int, int, int, tuple]] = [(heuristic(state) * HEURISTIC_WEIGHT, 0, 0, start_key)]
+    start_h = heuristic(state)
+    queue: list[tuple[int, int, int, tuple]] = [
+        (start_h * HEURISTIC_WEIGHT, 0, 0, start_key)
+    ]
+    # Column tuples are immutable and recur across many canonical positions.
+    # Keep this cache local to one solve so it cannot retain old games.
+    run_cache: dict[tuple[int, ...], int] = {}
 
     nodes = 0
     exhausted = True
@@ -145,7 +186,7 @@ def solve(
             exhausted = False
             break
 
-        _, g, _, key = heapq.heappop(queue)
+        priority, g, _, key = heapq.heappop(queue)
         if key in expanded:
             continue
         entry = seen[key]
@@ -153,21 +194,32 @@ def solve(
             continue  # stale queue entry
         expanded.add(key)
         current = entry[3]
+        current_h = (priority - g) // HEURISTIC_WEIGHT
         nodes += 1
 
         if key == start_key and not start_settled:
-            child_iter = successors(current)
+            child_iter = (
+                (move, _search_key(nxt), nxt, collected, None)
+                for move, nxt, collected in successors(current)
+            )
         else:
-            child_iter = successors_from_settled(current)
+            child_iter = prepared_successors_from_settled(current, key, run_cache)
 
-        for move, nxt, collected in child_iter:
-            nxt_key = _search_key(nxt)
+        for move, nxt_key, nxt, collected, parts in child_iter:
             cost = g + 1
             if nxt_key in expanded:
                 continue
             known = seen.get(nxt_key)
             if known is not None and known[0] <= cost:
                 continue
+
+            # Stable generated moves carry only the components needed for their
+            # canonical key until they survive deduplication. This is where the
+            # majority of rejected children avoid constructing a State.
+            if nxt is None:
+                assert parts is not None
+                nxt = _materialize_prepared(parts)
+
             seen[nxt_key] = (cost, key, move, nxt, collected)
 
             if nxt.is_won:
@@ -179,9 +231,8 @@ def solve(
                 )
 
             counter += 1
-            heapq.heappush(
-                queue, (cost + HEURISTIC_WEIGHT * heuristic(nxt), cost, counter, nxt_key)
-            )
+            nxt_h = _heuristic_after_move(current, current_h, move, nxt, collected)
+            heapq.heappush(queue, (cost + HEURISTIC_WEIGHT * nxt_h, cost, counter, nxt_key))
 
     status = Status.UNSOLVABLE if exhausted else Status.UNKNOWN
     return SolveResult(status, [], nodes, time.monotonic() - started)
