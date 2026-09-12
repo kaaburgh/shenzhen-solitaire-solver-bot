@@ -12,7 +12,6 @@ import pytest
 from shenzhen.cards import BLACK
 from shenzhen.vision.classify import ink_reading
 
-
 # (B, G, R, count) for every pixel currently admitted by the saturation mask.
 FRINGE_PIXELS = [
     [
