@@ -372,8 +372,15 @@ def can_collapse_dragons(state: State, colour: int) -> bool:
     return any(cell is None or cell == dragon for cell in state.free)
 
 
-def legal_moves(state: State) -> list[Move]:
-    """Every move the player could make from ``state``."""
+def legal_moves(
+    state: State, *, _run_cache: dict[tuple[int, ...], int] | None = None
+) -> list[Move]:
+    """Every move the player could make from ``state``.
+
+    ``_run_cache`` is solver-private scratch storage.  The public path leaves it
+    unset; a solve may reuse run lengths for immutable column tuples seen in
+    many canonical positions.
+    """
     moves: list[Move] = []
     columns = state.columns
     free = state.free
@@ -413,7 +420,14 @@ def legal_moves(state: State) -> list[Move]:
             accepts.append(None)
             continue
 
-        runs.append(max_run_length(col))
+        if _run_cache is None:
+            run = max_run_length(col)
+        else:
+            run = _run_cache.get(col)
+            if run is None:
+                run = max_run_length(col)
+                _run_cache[col] = run
+        runs.append(run)
         top = col[-1]
         if top < DRAGON_BASE:
             need = (top % 9, top // 9)
