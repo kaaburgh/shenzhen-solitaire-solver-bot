@@ -1,5 +1,6 @@
 import random
 
+import shenzhen.game as game_module
 import shenzhen.solver as solver_module
 from shenzhen._solver_successors import (
     _materialize_prepared,
@@ -40,6 +41,29 @@ def test_solver_successors_match_full_resolution_on_settled_walks():
             state, _ = apply_move(state, rng.choice(moves))
             if state.is_won:
                 break
+
+
+def test_prepared_successors_reuse_run_length_cache(monkeypatch):
+    state = deal(0)
+    parent_key = solver_module._search_key(state)
+    run_cache: dict[tuple[int, ...], int] = {}
+    calls = 0
+    original = game_module.max_run_length
+
+    def counted(column):
+        nonlocal calls
+        calls += 1
+        return original(column)
+
+    monkeypatch.setattr(game_module, "max_run_length", counted)
+
+    first = list(prepared_successors_from_settled(state, parent_key, run_cache))
+    first_calls = calls
+    second = list(prepared_successors_from_settled(state, parent_key, run_cache))
+
+    assert first_calls > 0
+    assert second == first
+    assert calls == first_calls
 
 
 def test_prepared_successor_defers_a_stable_child_state():
@@ -146,7 +170,7 @@ def test_solve_uses_general_successors_for_an_unsettled_initial_state(monkeypatc
     monkeypatch.setattr(
         solver_module,
         "prepared_successors_from_settled",
-        lambda current, key: calls.append("prepared") or iter(()),
+        lambda current, key, run_cache=None: calls.append("prepared") or iter(()),
     )
 
     solver_module.solve(state, max_nodes=1, time_limit=60)

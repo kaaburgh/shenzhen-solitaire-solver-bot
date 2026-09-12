@@ -174,6 +174,9 @@ def solve(
     queue: list[tuple[int, int, int, tuple]] = [
         (start_h * HEURISTIC_WEIGHT, 0, 0, start_key)
     ]
+    # Column tuples are immutable and recur across many canonical positions.
+    # Keep this cache local to one solve so it cannot retain old games.
+    run_cache: dict[tuple[int, ...], int] = {}
 
     nodes = 0
     exhausted = True
@@ -200,7 +203,7 @@ def solve(
                 for move, nxt, collected in successors(current)
             )
         else:
-            child_iter = prepared_successors_from_settled(current, key)
+            child_iter = prepared_successors_from_settled(current, key, run_cache)
 
         for move, nxt_key, nxt, collected, parts in child_iter:
             cost = g + 1
