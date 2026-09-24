@@ -592,6 +592,7 @@ def _screenshot(unsure):
     resolution = resolve(view.skeleton, view.reads)
     return view, Recognition(
         state=resolution.state,
+        grid_anchored=True,
         reads=view.reads,
         skeleton=view.skeleton,
         resolution=resolution,
