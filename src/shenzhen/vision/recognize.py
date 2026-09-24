@@ -127,12 +127,12 @@ class ReadCard:
 @dataclass
 class Recognition:
     state: State
+    #: whether the dragon buttons established the horizontal slot numbering.
+    #: Required rather than defaulted: losing this bit of geometry state must
+    #: fail loudly instead of silently disabling the control-card check.
+    grid_anchored: bool
     reads: list[ReadCard] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
-    #: whether the dragon buttons established the horizontal slot numbering.
-    #: Kept separately from the diagnostic layout because callers and test
-    #: fixtures may intentionally omit the layout object.
-    grid_anchored: bool = True
     layout: BoardLayout | None = None
     #: card width in the picture as it arrived, before :func:`enlarge` had a
     #: go at it.  The layout describes the enlarged copy, so it is no longer
