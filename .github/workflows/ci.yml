@@ -33,26 +33,6 @@ jobs:
       - name: Test
         run: python -m pytest -q
 
-      - name: Recognition benchmark after PR 35
-        if: matrix.python-version == '3.12'
-        run: |
-          PR_HEAD="${{ github.event.pull_request.head.sha }}"
-          echo "BASE 9c243d20c7b0404261ec6ff2359e5a3ce33fcb5c"
-          git fetch --depth=1 origin 9c243d20c7b0404261ec6ff2359e5a3ce33fcb5c
-          git checkout --detach 9c243d20c7b0404261ec6ff2359e5a3ce33fcb5c
-          python -m pip install -e ".[dev]"
-          python -m shenzhen.vision.benchmark
-          python -m shenzhen.vision.benchmark --width 0
-          python -m shenzhen.vision.benchmark --quality 20
-
-          echo "HEAD $PR_HEAD"
-          git fetch --depth=1 origin "$PR_HEAD"
-          git checkout --detach "$PR_HEAD"
-          python -m pip install -e ".[dev]"
-          python -m shenzhen.vision.benchmark
-          python -m shenzhen.vision.benchmark --width 0
-          python -m shenzhen.vision.benchmark --quality 20
-
   lint:
     runs-on: ubuntu-latest
     steps:
