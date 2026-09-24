@@ -85,7 +85,7 @@ def test_a_card_still_open_is_left_to_the_question_rather_than_checked():
     resolution = resolve(view.skeleton, view.reads)
     assert resolution.open
 
-    assert spot_check(view.reads, resolution) is None
+    assert spot_check(view.reads, resolution, grid_anchored=True) is None
 
 
 def test_an_unanchored_grid_puts_up_a_card_the_matcher_was_sure_of():
@@ -112,8 +112,8 @@ def test_an_anchored_grid_needs_no_control_card_even_if_layout_has_other_problem
 
 
 def test_a_position_that_was_typed_out_has_nothing_to_check():
-    assert spot_check([], None) is None
-    assert spot_check([]) is None
+    assert spot_check([], None, grid_anchored=True) is None
+    assert spot_check([], grid_anchored=True) is None
 
 
 def test_the_bottom_card_of_a_column_is_named_rather_than_counted_to():
