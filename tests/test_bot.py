@@ -510,7 +510,9 @@ def reading(context, monkeypatch):
 
     context.application.bot_data["config"].bank = object()
     monkeypatch.setattr(
-        handlers, "_recognize_bytes", lambda _data, _bank: Recognition(parse_board(SOLVABLE))
+        handlers,
+        "_recognize_bytes",
+        lambda _data, _bank: Recognition(parse_board(SOLVABLE), grid_anchored=True),
     )
     return context
 
