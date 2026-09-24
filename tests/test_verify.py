@@ -15,11 +15,16 @@ from shenzhen.vision.resolve import resolve
 from shenzhen.vision.verify import column_depths, spot_check
 
 
-def checked(unsure=None, pinned=None, warnings=()):
+def checked(unsure=None, pinned=None, *, grid_anchored=True):
     view = screen(AMBIGUOUS, unsure=unsure)
     resolution = resolve(view.skeleton, view.reads)
     pinned = {view.index_of(where): parse_card(card) for where, card in (pinned or {}).items()}
-    return view, spot_check(view.reads, resolution, pinned, warnings=warnings)
+    return view, spot_check(
+        view.reads,
+        resolution,
+        pinned,
+        grid_anchored=grid_anchored,
+    )
 
 
 def test_a_board_read_cleanly_is_not_put_up_for_checking_at_all():
@@ -83,16 +88,27 @@ def test_a_card_still_open_is_left_to_the_question_rather_than_checked():
     assert spot_check(view.reads, resolution) is None
 
 
-def test_a_shaky_geometry_puts_up_a_card_the_matcher_was_sure_of():
-    """The layout pass warns when it could not find the dragon buttons, and
-    then it is guessing which slot the leftmost column sits in. A wrong guess
-    slides every column sideways with all forty cards still present, so the
-    deck is content and only naming a column out loud catches it."""
-    view, check = checked(warnings=["could not find the dragon buttons"])
+def test_an_unanchored_grid_puts_up_a_card_the_matcher_was_sure_of():
+    """When the dragon buttons are missing, the layout guesses which slot the
+    leftmost column occupies. A wrong guess slides every column sideways with
+    all forty cards still present, so the deck is content and only naming a
+    column out loud catches it."""
+    view, check = checked(grid_anchored=False)
 
     assert check is not None
     assert "." in check.where, "a control card has to be named by its column"
     assert view.reads[check.index].confident
+
+
+def test_an_anchored_grid_needs_no_control_card_even_if_layout_has_other_problems():
+    """A local layout warning does not make every column label doubtful.
+
+    The warning text is deliberately not an input to spot_check any more; the
+    only fact that can ask for a geometry control card is whether the slot grid
+    itself was anchored.
+    """
+    _, check = checked(grid_anchored=True)
+    assert check is None
 
 
 def test_a_position_that_was_typed_out_has_nothing_to_check():
