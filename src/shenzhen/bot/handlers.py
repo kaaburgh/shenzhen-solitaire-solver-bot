@@ -354,7 +354,7 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             reads=result.reads,
             resolution=resolution,
             level=resolution.level,
-            grid_anchored=result.layout.grid_anchored,
+            grid_anchored=result.grid_anchored,
             warnings=result.warnings,
             # Every slot a question could still land on, so that each one can
             # show what it is asking about long after the bytes are gone.
@@ -366,7 +366,7 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     check = spot_check(
         result.reads,
         resolution,
-        grid_anchored=result.layout.grid_anchored,
+        grid_anchored=result.grid_anchored,
     )
     crops = await _cut_crops(data, result, [check.index] if check else [])
     await _accept_reading(
