@@ -36,6 +36,10 @@ class Pending:
     skeleton: Skeleton
     reads: list
     resolution: Resolution
+    #: whether the dragon buttons anchored the horizontal slot numbering.
+    #: Required rather than defaulted so an interview cannot silently forget
+    #: the geometry state that the final verification step depends on.
+    grid_anchored: bool
     #: read index -> the card the user has told us it is
     pinned: dict[int, int] = field(default_factory=dict)
     #: which escalation level produced this reading.  Frozen for the whole
@@ -46,10 +50,6 @@ class Pending:
     #: picture has to be its own message rather than an edit of the last one,
     #: so earlier keyboards stay live in the chat and have to be turned away.
     asked: int | None = None
-    #: whether the dragon buttons anchored the horizontal slot numbering.
-    #: Kept across a multi-question interview because the final spot check
-    #: still needs to know whether column labels themselves are trustworthy.
-    grid_anchored: bool = True
     warnings: list[str] = field(default_factory=list)
     #: read index -> an encoded picture of that slot, cut from the screenshot
     #: while it was still in hand, so a question can show what it is asking
