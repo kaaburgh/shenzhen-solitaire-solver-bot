@@ -544,7 +544,6 @@ def detect_layout(image: np.ndarray, config: LayoutConfig | None = None) -> Boar
     base = column_base(found, pitch)
     if base is not None:
         top = min(b.y for b in found.values())
-        felt = felt_level(image, base, pitch, top, layout)
         for slot in range(NUM_COLUMNS):
             if layout.columns[slot]:
                 continue
@@ -555,7 +554,15 @@ def detect_layout(image: np.ndarray, config: LayoutConfig | None = None) -> Boar
                     f"column {slot + 1} was read off the board's grid; something was "
                     f"drawn across it"
                 )
-            elif felt is not None and not slot_is_marked(
+                continue
+
+            # The board is shaded horizontally: the middle of the felt is
+            # visibly brighter than the edges.  The empty-slot mark has to be
+            # compared with the felt immediately beside that slot, not with a
+            # board-wide median, or a perfectly real edge mark can look no
+            # brighter than the reference at all.
+            felt = felt_level(image, base, pitch, top, layout, slot=slot)
+            if felt is not None and not slot_is_marked(
                 image, slot, base, pitch, top, felt, layout, config
             ):
                 # Neither cards nor the mark the game leaves on an emptied
@@ -630,25 +637,43 @@ def _brightness(image: np.ndarray, x0: int, y0: int, x1: int, y1: int) -> float 
 
 
 def felt_level(
-    image: np.ndarray, base: float, pitch: float, top: int, layout: BoardLayout
+    image: np.ndarray,
+    base: float,
+    pitch: float,
+    top: int,
+    layout: BoardLayout,
+    *,
+    slot: int | None = None,
 ) -> float | None:
-    """How bright the felt is, measured in the gaps between the tableau slots.
+    """How bright the felt is, measured in the gaps between tableau slots.
 
     A reference rather than a constant: the felt is drawn at whatever
     brightness the device and the compression leave it at, and everything that
-    reads the board against it wants the ratio, not the level.  Taken from the
-    gaps because they are the one part of the tableau row guaranteed to be
-    felt on every board -- a slot may hold cards or an empty-slot mark, but
-    the strip between two slots is bare whatever is going on.
+    reads the board against it wants the ratio, not the level.
+
+    When a slot is given, use only the one or two gaps immediately beside that
+    slot.  The game shades the board horizontally, so a board-wide median is
+    not the felt beside an edge slot: on real screenshots the edge gap is about
+    8% darker than the median gap.  That is enough to turn a real empty-slot
+    mark from roughly 1.10x its local felt into roughly 1.02x the global
+    reference and falsely call the column hidden.
     """
-    strips = []
+    levels: list[float | None] = []
     inset = max(2, layout.card_w // 30)
-    for slot in range(NUM_COLUMNS - 1):
-        x0 = int(round(base + slot * pitch)) + layout.card_w + inset
-        x1 = int(round(base + (slot + 1) * pitch)) - inset
-        level = _brightness(image, x0, top, x1, top + layout.card_h)
-        if level is not None:
-            strips.append(level)
+    for gap in range(NUM_COLUMNS - 1):
+        x0 = int(round(base + gap * pitch)) + layout.card_w + inset
+        x1 = int(round(base + (gap + 1) * pitch)) - inset
+        levels.append(_brightness(image, x0, top, x1, top + layout.card_h))
+
+    if slot is None:
+        strips = [level for level in levels if level is not None]
+    else:
+        adjacent = []
+        if slot > 0:
+            adjacent.append(slot - 1)
+        if slot < NUM_COLUMNS - 1:
+            adjacent.append(slot)
+        strips = [levels[gap] for gap in adjacent if levels[gap] is not None]
     return float(np.median(strips)) if strips else None
 
 
