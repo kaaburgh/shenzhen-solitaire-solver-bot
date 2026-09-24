@@ -33,6 +33,12 @@ jobs:
       - name: Test
         run: python -m pytest -q
 
+      - name: Recognition benchmark
+        if: matrix.python-version == '3.12'
+        run: |
+          python -m shenzhen.vision.benchmark
+          python -m shenzhen.vision.benchmark --width 0
+
   lint:
     runs-on: ubuntu-latest
     steps:
