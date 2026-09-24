@@ -33,26 +33,6 @@ jobs:
       - name: Test
         run: python -m pytest -q
 
-      - name: Refresh recognition measurement record
-        if: matrix.python-version == '3.12'
-        run: |
-          PR_HEAD="${{ github.event.pull_request.head.sha }}"
-          echo "BASE 7554f61c5000e9ae8dbc9185a53b55a19b773529"
-          git fetch --depth=1 origin 7554f61c5000e9ae8dbc9185a53b55a19b773529
-          git checkout --detach 7554f61c5000e9ae8dbc9185a53b55a19b773529
-          python -m pip install -e ".[dev]"
-          python -m shenzhen.vision.benchmark
-          python -m shenzhen.vision.benchmark --width 0
-          python -m shenzhen.vision.benchmark --quality 20
-
-          echo "HEAD $PR_HEAD"
-          git fetch --depth=1 origin "$PR_HEAD"
-          git checkout --detach "$PR_HEAD"
-          python -m pip install -e ".[dev]"
-          python -m shenzhen.vision.benchmark
-          python -m shenzhen.vision.benchmark --width 0
-          python -m shenzhen.vision.benchmark --quality 20
-
   lint:
     runs-on: ubuntu-latest
     steps:
