@@ -842,6 +842,7 @@ def test_a_column_hidden_behind_something_is_not_reported_as_empty():
 
     layout = detect_layout(image, CONFIG)
     assert not layout.columns[3]
+    assert layout.grid_anchored, "the local warning must not make column labels doubtful"
     assert any("column 4" in w and "hidden" in w for w in layout.warnings), layout.warnings
 
 
