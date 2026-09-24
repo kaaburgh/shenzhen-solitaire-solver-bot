@@ -651,12 +651,11 @@ def felt_level(
     brightness the device and the compression leave it at, and everything that
     reads the board against it wants the ratio, not the level.
 
-    When a slot is given, use only the one or two gaps immediately beside that
-    slot.  The game shades the board horizontally, so a board-wide median is
-    not the felt beside an edge slot: on real screenshots the edge gap is about
-    8% darker than the median gap.  That is enough to turn a real empty-slot
-    mark from roughly 1.10x its local felt into roughly 1.02x the global
-    reference and falsely call the column hidden.
+    Uses only the one or two gaps immediately beside the requested slot.  The
+    game shades the board horizontally, so a board-wide median is not the felt
+    beside an edge slot: on the affected real screenshots the empty edge mark
+    was about 1.10x its local felt but only about 1.02x the global reference,
+    which falsely called the column hidden.
     """
     levels: list[float | None] = []
     inset = max(2, layout.card_w // 30)
