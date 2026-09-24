@@ -337,8 +337,9 @@ other seven column labels doubtful. Doing so made the verifier pick the
 highest-confidence card on the board for confirmation -- exactly the most
 obvious card in the screenshot -- even though the warning concerned a
 different column. The layout now carries `grid_anchored` explicitly, and
-only an unanchored grid can request that control card; warning strings remain
-presentation, not control flow.
+only an unanchored grid can request that control card. Warning strings still
+matter to the broader confirmation flow, but they no longer select a geometry
+control card or stand in for uncertainty about the grid anchor.
 
 ### A seam is wide, a glyph is not
 
