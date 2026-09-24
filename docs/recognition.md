@@ -37,13 +37,15 @@ move `cards` and `confident-wrong` in the same direction, and only one of them
 shows up in a headline. **A change that improves `cards` while raising
 `confident-wrong` is a regression.**
 
-Current baseline, 12 fixtures, 31 templates:
+Current baseline, measured 2026-09-24 on 12 fixtures with 31 templates
+(404 scored tableau slots). The same figures were reproduced on base
+`7554f61c` and on this change:
 
 | | cards | boards | flagged | confident-wrong |
 | --- | --- | --- | --- | --- |
-| untouched (`--width 0`) | 99.5% | 12/12 | 5 | 0 |
-| as Telegram sends it | 99.3% | 12/12 | 7 | 0 |
-| `--quality 20` (past what is real) | 96.5% | 8/12 | 20 | 10 |
+| untouched (`--width 0`) | 100.0% (404/404) | 12/12 | 1 | 0 |
+| as Telegram sends it | 99.8% (403/404) | 12/12 | 3 | 0 |
+| `--quality 20` (past what is real) | 97.0% (392/404) | 8/12 | 16 | 10 |
 
 ### Traps in measuring
 
@@ -213,6 +215,19 @@ that survives a change of device or compression:
 
 `slot_mark_range` is (1.05, 1.8) — wide enough for every mark seen, and
 nowhere near either neighbour.
+
+The reference really does have to be the felt **beside that slot**. Three real
+screenshots received on 2026-09-24 exposed a mismatch between the note and the
+implementation: `felt_level` was taking the median of all seven inter-column
+gaps. The board itself is horizontally shaded, with the outer gaps darker than
+the middle ones. Recomputed through the implementation's actual crop geometry,
+the three empty edge marks measured **1.021–1.027** against the board-wide
+median (1.0209, 1.0254, 1.0265) and were therefore called hidden, while the
+same pixels measured **1.095–1.097** against the adjacent gap (1.0954, 1.0965,
+1.0970) — right in the established mark band. The threshold was not the
+problem; the reference region was. Empty-slot checks now require the one or
+two gaps adjacent to the slot they are judging; the old board-wide mode is not
+kept as an alternative.
 
 That gives three states rather than two, which is the point:
 
