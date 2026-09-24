@@ -814,7 +814,7 @@ def test_an_empty_slot_is_something_the_game_draws_not_an_absence():
     pitch = CONFIG.slot_pitch * layout.card_w
     grid = column_base(found, pitch)
     top = min(b.y for b in found.values())
-    felt = felt_level(image, grid, pitch, top, layout)
+    felt = felt_level(image, grid, pitch, top, layout, slot=3)
 
     x = int(round(grid + 3 * pitch))
     mark = image[top + 20 : top + layout.card_h - 20, x + 20 : x + layout.card_w - 20]
@@ -823,6 +823,44 @@ def test_an_empty_slot_is_something_the_game_draws_not_an_absence():
     low, high = CONFIG.slot_mark_range
     assert low <= level / felt <= high, level / felt
     assert level / felt > 1.02, "an empty slot is not bare felt"
+
+
+@pytest.mark.parametrize(
+    ("slot", "left_gain", "right_gain"),
+    [(0, 0.88, 1.12), (7, 1.12, 0.88)],
+)
+def test_an_empty_edge_slot_is_compared_with_the_felt_beside_it(
+    slot, left_gain, right_gain
+):
+    """Horizontal board shading must not turn a real empty slot into a warning.
+
+    The real screenshots that exposed this are darker at the outer edge than
+    through the middle.  A board-wide felt median therefore made the edge
+    marker look only about 1.02x as bright as its reference even though it is
+    about 1.10x the felt immediately beside it.
+    """
+    base = raw_deal(17)
+    columns = list(base.columns)
+    columns[slot] = ()
+    state = State(
+        columns=tuple(columns),
+        free=(None, None, None),
+        foundations=(0, 0, 0),
+        flower=False,
+    )
+    image = render(state)
+
+    gain = np.linspace(
+        left_gain, right_gain, image.shape[1], dtype=np.float32
+    )[None, :, None]
+    shaded = np.clip(image.astype(np.float32) * gain, 0, 255).astype(np.uint8)
+
+    layout = detect_layout(shaded, CONFIG)
+
+    assert not layout.columns[slot]
+    assert not any(
+        f"column {slot + 1} is hidden" in warning for warning in layout.warnings
+    ), layout.warnings
 
 
 def test_a_column_hidden_behind_something_is_not_reported_as_empty():
