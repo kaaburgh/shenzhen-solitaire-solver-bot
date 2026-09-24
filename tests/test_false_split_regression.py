@@ -20,7 +20,7 @@ def test_glyphless_false_split_is_not_reported_as_an_extra_card(monkeypatch):
     dragon = make_dragon(GREEN)
     upper = Box(0, 0, 150, 36)
     lower = Box(0, 36, 150, 251)
-    layout = BoardLayout(card_w=150, card_h=287, offset=36)
+    layout = BoardLayout(card_w=150, card_h=287, offset=36, grid_anchored=True)
     layout.columns[6] = [upper, lower]
     monkeypatch.setattr(RECOGNIZE, "detect_layout", lambda _image, _config: layout)
 
