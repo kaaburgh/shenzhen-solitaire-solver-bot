@@ -158,6 +158,7 @@ def test_the_dragon_buttons_anchor_the_grid():
     assert len(find_dragon_buttons(image, 190, CONFIG)) == 3
 
     layout = detect_layout(image, CONFIG)
+    assert layout.grid_anchored
     assert not layout.warnings
     assert all(cell is None for cell in layout.free_cells)
     assert sum(len(c) for c in layout.columns) == 40
