@@ -214,6 +214,17 @@ that survives a change of device or compression:
 `slot_mark_range` is (1.05, 1.8) — wide enough for every mark seen, and
 nowhere near either neighbour.
 
+The reference really does have to be the felt **beside that slot**. Three real
+screenshots received on 2026-09-24 exposed a mismatch between the note and the
+implementation: `felt_level` was taking the median of all seven inter-column
+gaps. The board itself is horizontally shaded, with the outer gaps about 8%
+darker than the middle ones. For empty edge columns the mark measured only
+1.018–1.025 against that board-wide median and was therefore called hidden,
+while the same pixels measured **1.098–1.114** against the adjacent gap —
+right in the established mark band. The threshold was not the problem; the
+reference region was. Empty-slot checks now use only the one or two gaps
+adjacent to the slot they are judging.
+
 That gives three states rather than two, which is the point:
 
 * **cards** — the column is there.
