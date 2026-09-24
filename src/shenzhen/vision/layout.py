@@ -643,7 +643,7 @@ def felt_level(
     top: int,
     layout: BoardLayout,
     *,
-    slot: int | None = None,
+    slot: int,
 ) -> float | None:
     """How bright the felt is, measured in the gaps between tableau slots.
 
@@ -665,15 +665,12 @@ def felt_level(
         x1 = int(round(base + (gap + 1) * pitch)) - inset
         levels.append(_brightness(image, x0, top, x1, top + layout.card_h))
 
-    if slot is None:
-        strips = [level for level in levels if level is not None]
-    else:
-        adjacent = []
-        if slot > 0:
-            adjacent.append(slot - 1)
-        if slot < NUM_COLUMNS - 1:
-            adjacent.append(slot)
-        strips = [levels[gap] for gap in adjacent if levels[gap] is not None]
+    adjacent = []
+    if slot > 0:
+        adjacent.append(slot - 1)
+    if slot < NUM_COLUMNS - 1:
+        adjacent.append(slot)
+    strips = [levels[gap] for gap in adjacent if levels[gap] is not None]
     return float(np.median(strips)) if strips else None
 
 
