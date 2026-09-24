@@ -177,16 +177,16 @@ class BoardLayout:
     card_w: int
     card_h: int
     offset: int
+    #: True when the dragon buttons anchored the horizontal slot numbering.
+    #: A fallback from the leftmost card can still read every card and satisfy
+    #: the deck while shifting every column number, so only that fallback
+    #: needs a control card from :mod:`shenzhen.vision.verify`.
+    grid_anchored: bool
     free_cells: list[Box | None] = field(default_factory=lambda: [None] * NUM_FREE_CELLS)
     locked_cells: list[bool] = field(default_factory=lambda: [False] * NUM_FREE_CELLS)
     flower: Box | None = None
     foundations: list[Box | None] = field(default_factory=lambda: [None] * 3)
     columns: list[list[Box]] = field(default_factory=lambda: [[] for _ in range(NUM_COLUMNS)])
-    #: True when the dragon buttons anchored the horizontal slot numbering.
-    #: A fallback from the leftmost card can still read every card and satisfy
-    #: the deck while shifting every column number, so only that fallback
-    #: needs a control card from :mod:`shenzhen.vision.verify`.
-    grid_anchored: bool = True
     warnings: list[str] = field(default_factory=list)
 
 
