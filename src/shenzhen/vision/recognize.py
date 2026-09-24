@@ -129,6 +129,10 @@ class Recognition:
     state: State
     reads: list[ReadCard] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    #: whether the dragon buttons established the horizontal slot numbering.
+    #: Kept separately from the diagnostic layout because callers and test
+    #: fixtures may intentionally omit the layout object.
+    grid_anchored: bool = True
     layout: BoardLayout | None = None
     #: card width in the picture as it arrived, before :func:`enlarge` had a
     #: go at it.  The layout describes the enlarged copy, so it is no longer
@@ -400,6 +404,7 @@ def recognize(
         state=resolution.state,
         reads=reads,
         warnings=warnings,
+        grid_anchored=layout.grid_anchored,
         layout=layout,
         source_card_w=source_card_w,
         scale=scale,
