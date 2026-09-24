@@ -37,13 +37,15 @@ move `cards` and `confident-wrong` in the same direction, and only one of them
 shows up in a headline. **A change that improves `cards` while raising
 `confident-wrong` is a regression.**
 
-Current baseline, 12 fixtures, 31 templates:
+Current baseline, measured 2026-09-24 on 12 fixtures with 31 templates
+(404 scored tableau slots). The same figures were reproduced on base
+`7554f61c` and on this change:
 
 | | cards | boards | flagged | confident-wrong |
 | --- | --- | --- | --- | --- |
-| untouched (`--width 0`) | 99.5% | 12/12 | 5 | 0 |
-| as Telegram sends it | 99.3% | 12/12 | 7 | 0 |
-| `--quality 20` (past what is real) | 96.5% | 8/12 | 20 | 10 |
+| untouched (`--width 0`) | 100.0% (404/404) | 12/12 | 1 | 0 |
+| as Telegram sends it | 99.8% (403/404) | 12/12 | 3 | 0 |
+| `--quality 20` (past what is real) | 97.0% (392/404) | 8/12 | 16 | 10 |
 
 ### Traps in measuring
 
