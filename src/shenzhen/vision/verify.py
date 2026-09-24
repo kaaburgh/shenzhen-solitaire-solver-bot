@@ -87,7 +87,7 @@ def spot_check(
     resolution=None,
     pinned: dict[int, int] | None = None,
     *,
-    grid_anchored: bool = True,
+    grid_anchored: bool,
 ) -> Check | None:
     """The one slot worth confirming, or ``None`` when the reading proved itself.
 
