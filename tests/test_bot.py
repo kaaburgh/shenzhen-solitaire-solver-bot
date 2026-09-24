@@ -581,10 +581,14 @@ async def test_an_unexpected_failure_still_answers_the_chat(context):
 # --- asking about cards the deck could not settle --------------------------
 
 
-def _screenshot(unsure):
+def _screenshot(unsure, *, grid_anchored=True):
     """A Recognition as `recognize` would have produced it for a board whose
     named slots came out shaky.  Runs the real resolver, so what the handlers
-    get here is what they would get from a real picture."""
+    get here is what they would get from a real picture.
+
+    ``grid_anchored`` is explicit here because bot-level tests need to exercise
+    both geometry paths.  In production it comes from the layout pass.
+    """
     from test_resolve import AMBIGUOUS, screen
 
     from shenzhen.vision.recognize import Recognition
@@ -594,7 +598,7 @@ def _screenshot(unsure):
     resolution = resolve(view.skeleton, view.reads)
     return view, Recognition(
         state=resolution.state,
-        grid_anchored=True,
+        grid_anchored=grid_anchored,
         reads=view.reads,
         skeleton=view.skeleton,
         resolution=resolution,
@@ -716,6 +720,42 @@ async def test_answering_the_one_question_settles_the_rest_and_solves(context, m
     session = context.application.bot_data["sessions"].get(1)
     assert session.pending is None
     assert session.board == recognition.state
+
+
+@pytest.mark.asyncio
+async def test_unanchored_grid_survives_the_interview_and_gets_a_control_check(
+    context, monkeypatch
+):
+    """Carry the geometry safety bit through the whole bot interview.
+
+    The layout/verify unit tests cover the producer and consumer separately.
+    This pins the seam between them: an unanchored Recognition starts an
+    interview, the answer settles the last open card, and the final
+    verification must still ask for a confident tableau control card rather
+    than going straight to the solver.
+    """
+    _, recognition = _screenshot(
+        {"1.3": ["G3", "G8"], "2.3": ["G8", "G3"]},
+        grid_anchored=False,
+    )
+    log: list = []
+    await send_photo(context, log, recognition, monkeypatch)
+
+    session = context.application.bot_data["sessions"].get(1)
+    assert session.pending is not None
+    assert not session.pending.grid_anchored
+
+    answer = next(b for b in buttons(log) if b.startswith("pick:"))
+    await press(context, answer, log)
+
+    session = context.application.bot_data["sessions"].get(1)
+    assert session.pending is None
+
+    final = log[-1][0]
+    assert "сверь" in final, final
+    assert "что там?" not in final, final
+    assert "Решение есть" not in final, final
+    assert buttons(log) == ["solve", "fix", "board"]
 
 
 @pytest.mark.asyncio
