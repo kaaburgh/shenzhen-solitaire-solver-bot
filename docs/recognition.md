@@ -217,13 +217,15 @@ nowhere near either neighbour.
 The reference really does have to be the felt **beside that slot**. Three real
 screenshots received on 2026-09-24 exposed a mismatch between the note and the
 implementation: `felt_level` was taking the median of all seven inter-column
-gaps. The board itself is horizontally shaded, with the outer gaps about 8%
-darker than the middle ones. For empty edge columns the mark measured only
-1.018–1.025 against that board-wide median and was therefore called hidden,
-while the same pixels measured **1.098–1.114** against the adjacent gap —
-right in the established mark band. The threshold was not the problem; the
-reference region was. Empty-slot checks now use only the one or two gaps
-adjacent to the slot they are judging.
+gaps. The board itself is horizontally shaded, with the outer gaps darker than
+the middle ones. Recomputed through the implementation's actual crop geometry,
+the three empty edge marks measured **1.021–1.027** against the board-wide
+median (1.0209, 1.0254, 1.0265) and were therefore called hidden, while the
+same pixels measured **1.095–1.097** against the adjacent gap (1.0954, 1.0965,
+1.0970) — right in the established mark band. The threshold was not the
+problem; the reference region was. Empty-slot checks now require the one or
+two gaps adjacent to the slot they are judging; the old board-wide mode is not
+kept as an alternative.
 
 That gives three states rather than two, which is the point:
 
