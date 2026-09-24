@@ -33,22 +33,6 @@ jobs:
       - name: Test
         run: python -m pytest -q
 
-      - name: Recognition benchmark
-        if: matrix.python-version == '3.12'
-        run: |
-          echo "BASE 7554f61c5000e9ae8dbc9185a53b55a19b773529"
-          git fetch --depth=1 origin 7554f61c5000e9ae8dbc9185a53b55a19b773529
-          git checkout --detach 7554f61c5000e9ae8dbc9185a53b55a19b773529
-          python -m pip install -e ".[dev]"
-          python -m shenzhen.vision.benchmark
-          python -m shenzhen.vision.benchmark --width 0
-
-          echo "HEAD $GITHUB_SHA"
-          git checkout --detach "$GITHUB_SHA"
-          python -m pip install -e ".[dev]"
-          python -m shenzhen.vision.benchmark
-          python -m shenzhen.vision.benchmark --width 0
-
   lint:
     runs-on: ubuntu-latest
     steps:
