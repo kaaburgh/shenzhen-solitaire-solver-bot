@@ -46,6 +46,10 @@ class Pending:
     #: picture has to be its own message rather than an edit of the last one,
     #: so earlier keyboards stay live in the chat and have to be turned away.
     asked: int | None = None
+    #: whether the dragon buttons anchored the horizontal slot numbering.
+    #: Kept across a multi-question interview because the final spot check
+    #: still needs to know whether column labels themselves are trustworthy.
+    grid_anchored: bool = True
     warnings: list[str] = field(default_factory=list)
     #: read index -> an encoded picture of that slot, cut from the screenshot
     #: while it was still in hand, so a question can show what it is asking
