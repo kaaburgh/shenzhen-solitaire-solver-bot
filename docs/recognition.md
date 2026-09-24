@@ -323,6 +323,23 @@ for a column the phone had drawn its home indicator across.
 Nothing arriving as a Telegram photo comes near 75px. A picture that small has
 been cropped or scaled by hand, and then the size really is the thing to fix.
 
+### A warning is not the same thing as an unanchored grid
+
+The control-card check exists for one geometric failure: when the dragon
+buttons are missing, the reader guesses which slot the leftmost column is in.
+That guess can slide every column number while preserving all forty cards, so
+the deck cannot catch it. A confident tableau card, named by its column, is a
+useful control for that specific failure.
+
+Do not use the presence of any layout warning as a proxy for that condition.
+A local warning such as "column 1 is hidden behind something" does not make the
+other seven column labels doubtful. Doing so made the verifier pick the
+highest-confidence card on the board for confirmation -- exactly the most
+obvious card in the screenshot -- even though the warning concerned a
+different column. The layout now carries `grid_anchored` explicitly, and
+only an unanchored grid can request that control card; warning strings remain
+presentation, not control flow.
+
 ### A seam is wide, a glyph is not
 
 The column splitter cuts a stacked column at rows where brightness steps up.
