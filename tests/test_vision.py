@@ -17,7 +17,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 import pytest
-from fake_board import CARD_H, CARD_W, OFFSET, TABLEAU_Y, render, slot_x
+from fake_board import CARD_H, CARD_W, FELT, OFFSET, TABLEAU_Y, TOP_Y, render, slot_x
 
 from shenzhen.cards import (
     BLACK,
@@ -158,9 +158,36 @@ def test_the_dragon_buttons_anchor_the_grid():
     assert len(find_dragon_buttons(image, 190, CONFIG)) == 3
 
     layout = detect_layout(image, CONFIG)
+    assert layout.grid_anchored
     assert not layout.warnings
     assert all(cell is None for cell in layout.free_cells)
     assert sum(len(c) for c in layout.columns) == 40
+
+
+def test_missing_dragon_buttons_leave_the_grid_unanchored():
+    """The producer side of the control-card signal, not just its consumer.
+
+    If this fact is ever dropped while refactoring layout/recognition, the
+    verifier would silently stop checking the one geometry failure the deck
+    cannot detect.  Paint over the buttons exactly as an overlay could and
+    require detect_layout to expose that it had to fall back to the leftmost
+    card for its slot numbering.
+    """
+    image = render(raw_deal(1))
+    x = slot_x(3)
+    cv2.rectangle(
+        image,
+        (x, TOP_Y),
+        (x + CARD_W, TOP_Y + CARD_H),
+        FELT,
+        -1,
+    )
+
+    assert not find_dragon_buttons(image, CARD_W, CONFIG)
+    layout = detect_layout(image, CONFIG)
+
+    assert not layout.grid_anchored
+    assert any("could not find the dragon buttons" in warning for warning in layout.warnings)
 
 
 def test_a_board_whose_first_columns_are_empty_still_lines_up():
@@ -880,6 +907,7 @@ def test_a_column_hidden_behind_something_is_not_reported_as_empty():
 
     layout = detect_layout(image, CONFIG)
     assert not layout.columns[3]
+    assert layout.grid_anchored, "the local warning must not make column labels doubtful"
     assert any("column 4" in w and "hidden" in w for w in layout.warnings), layout.warnings
 
 

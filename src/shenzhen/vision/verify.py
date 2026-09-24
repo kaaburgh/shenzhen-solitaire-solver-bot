@@ -87,7 +87,7 @@ def spot_check(
     resolution=None,
     pinned: dict[int, int] | None = None,
     *,
-    warnings: Sequence[str] = (),
+    grid_anchored: bool,
 ) -> Check | None:
     """The one slot worth confirming, or ``None`` when the reading proved itself.
 
@@ -97,6 +97,11 @@ def spot_check(
     is about to ask about that one properly, with its alternatives, and a
     confirmation of a card it has not settled on would say less than the
     question does.
+
+    ``grid_anchored`` says whether the dragon buttons established the
+    horizontal slot numbering.  Only an unanchored grid needs a control card:
+    ordinary layout warnings can describe a local problem without making the
+    position of every other column doubtful.
 
     ``None`` also comes back for a position that was typed out rather than
     read off a picture, which is the caller's cue to show the board itself.
@@ -108,7 +113,7 @@ def spot_check(
         return None
 
     index = _overruled(reads, resolution, pinned)
-    if index is None and warnings:
+    if index is None and not grid_anchored:
         index = _control(reads, pinned)
     if index is None:
         return None

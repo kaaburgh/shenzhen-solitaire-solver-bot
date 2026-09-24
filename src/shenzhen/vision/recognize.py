@@ -127,6 +127,10 @@ class ReadCard:
 @dataclass
 class Recognition:
     state: State
+    #: whether the dragon buttons established the horizontal slot numbering.
+    #: Required rather than defaulted: losing this bit of geometry state must
+    #: fail loudly instead of silently disabling the control-card check.
+    grid_anchored: bool
     reads: list[ReadCard] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     layout: BoardLayout | None = None
@@ -400,6 +404,7 @@ def recognize(
         state=resolution.state,
         reads=reads,
         warnings=warnings,
+        grid_anchored=layout.grid_anchored,
         layout=layout,
         source_card_w=source_card_w,
         scale=scale,

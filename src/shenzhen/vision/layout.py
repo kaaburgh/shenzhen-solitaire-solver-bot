@@ -177,6 +177,11 @@ class BoardLayout:
     card_w: int
     card_h: int
     offset: int
+    #: True when the dragon buttons anchored the horizontal slot numbering.
+    #: A fallback from the leftmost card can still read every card and satisfy
+    #: the deck while shifting every column number, so only that fallback
+    #: needs a control card from :mod:`shenzhen.vision.verify`.
+    grid_anchored: bool
     free_cells: list[Box | None] = field(default_factory=lambda: [None] * NUM_FREE_CELLS)
     locked_cells: list[bool] = field(default_factory=lambda: [False] * NUM_FREE_CELLS)
     flower: Box | None = None
@@ -511,6 +516,7 @@ def detect_layout(image: np.ndarray, config: LayoutConfig | None = None) -> Boar
     pitch = _estimate_pitch(boxes, card_w, config)
 
     buttons = find_dragon_buttons(image, card_w, config)
+    grid_anchored = bool(buttons)
     if buttons:
         button_x = float(np.median([b.x + b.w / 2 for b in buttons]))
         # The buttons sit in slot 3; back out where slot 0 starts.
@@ -523,7 +529,13 @@ def detect_layout(image: np.ndarray, config: LayoutConfig | None = None) -> Boar
 
     top_boxes, tableau_boxes = _split_rows(boxes, min_gap=0.5 * card_h)
 
-    layout = BoardLayout(card_w=card_w, card_h=card_h, offset=0, warnings=warnings)
+    layout = BoardLayout(
+        card_w=card_w,
+        card_h=card_h,
+        offset=0,
+        grid_anchored=grid_anchored,
+        warnings=warnings,
+    )
 
     offset = _estimate_offset(gray, tableau_boxes, card_w, config)
     layout.offset = offset
