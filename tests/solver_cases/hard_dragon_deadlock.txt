@@ -16,6 +16,20 @@
 #   maximum RSS: 255056 KiB
 #
 # The node count is the acceptance baseline; elapsed time is runner-dependent.
+#
+# First sound dragon-collapse reachability experiment, paired on one runner
+# (GitHub Actions run 36685757194, CPython 3.12.14):
+#   base: status UNSOLVABLE, 287972 nodes, 10.337970 s solver,
+#         10.65 s wall, 254908 KiB max RSS
+#   proof: status UNSOLVABLE, 287972 nodes, 6.673517 s solver,
+#          6.72 s wall, 130376 KiB max RSS
+#   delta: -35.4% solver time, -36.9% wall time, -48.9% max RSS
+#
+# The proof does not prune this graph: it walks the same 287972 canonical
+# positions, but only asks whether a first remaining dragon collapse is
+# reachable. Exhausting every non-collapse edge without finding one is enough
+# to prove the position unwinnable, and avoids A* priorities, parent history,
+# and path-cost bookkeeping.
 
 free: . DB DB
 flower: 1
