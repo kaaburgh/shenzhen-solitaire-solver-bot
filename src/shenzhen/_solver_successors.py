@@ -17,11 +17,11 @@ from collections.abc import Iterator, Sequence
 
 from .cards import DRAGON_BASE, FLOWER, NUM_CARD_IDS, SUITS
 from .game import (
-    Move,
-    State,
     _DESTINATIONS_BY_MASK,
     _with_foundation,
     _with_free_cell,
+    Move,
+    State,
     apply_move,
     auto_resolve,
     legal_moves,

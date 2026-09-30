@@ -30,6 +30,16 @@
 # reachable. Exhausting every non-collapse edge without finding one is enough
 # to prove the position unwinnable, and avoids A* priorities, parent history,
 # and path-cost bookkeeping.
+#
+# Stacked proof-hot-path experiment, paired against the proof above on one
+# GitHub Actions runner (run 36689119704, CPython 3.12.14):
+#   proof base: 287972 nodes, 8.794733 s solver, 8.85 s wall, 129968 KiB RSS
+#   fused keys: 287972 nodes, 6.958006 s solver, 7.01 s wall, 110676 KiB RSS
+#   delta: -20.9% solver time, -20.8% wall time, -14.8% max RSS
+#
+# The optimization generates exact canonical child keys directly from the
+# canonical parent key. Stable children avoid Move and State construction;
+# the rare automatic-resolution cases fall back to the general prepared path.
 
 free: . DB DB
 flower: 1
