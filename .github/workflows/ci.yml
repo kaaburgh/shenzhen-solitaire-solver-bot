@@ -33,31 +33,51 @@ jobs:
       - name: Test
         run: python -m pytest -q
 
-      - name: Profile dragon proof hot path
-        if: matrix.python-version == '3.12'
+      - name: Compare proof hot path to stacked base
+        if: matrix.python-version == '3.12' && github.event_name == 'pull_request'
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          python - <<'PY'
-          import cProfile
-          import pstats
+          cp tests/solver_cases/hard_dragon_deadlock.txt /tmp/hard_dragon_deadlock.txt
+
+          git fetch --depth=1 origin 1236039472a231abe5bba7cbd08dbebdd9973a6e
+          git checkout --detach 1236039472a231abe5bba7cbd08dbebdd9973a6e
+          /usr/bin/time -f 'BASE_PROOF_WALL=%e BASE_PROOF_MAXRSS=%M' python - <<'PY'
           import time
           from pathlib import Path
-
           from shenzhen.solver import _dragon_collapse_reachable
           from shenzhen.textio import parse_board
 
-          state = parse_board(Path("tests/solver_cases/hard_dragon_deadlock.txt").read_text())
-          profile = cProfile.Profile()
-          result = profile.runcall(
-              _dragon_collapse_reachable,
-              state,
-              max_nodes=400_000,
-              deadline=time.monotonic() + 600.0,
+          state = parse_board(Path("/tmp/hard_dragon_deadlock.txt").read_text())
+          started = time.monotonic()
+          reachable, nodes = _dragon_collapse_reachable(
+              state, max_nodes=400_000, deadline=started + 600.0
           )
-          print(f"DRAGON_PROOF_PROFILE reachable={result[0]} nodes={result[1]}")
-          print("TOP_CUMULATIVE")
-          pstats.Stats(profile).strip_dirs().sort_stats("cumulative").print_stats(30)
-          print("TOP_TOTTIME")
-          pstats.Stats(profile).strip_dirs().sort_stats("tottime").print_stats(30)
+          print(
+              "BASE_PROOF "
+              f"reachable={reachable} nodes={nodes} "
+              f"elapsed={time.monotonic() - started:.6f}s"
+          )
+          PY
+
+          git fetch --depth=1 origin "$HEAD_SHA"
+          git checkout --detach "$HEAD_SHA"
+          /usr/bin/time -f 'HEAD_PROOF_WALL=%e HEAD_PROOF_MAXRSS=%M' python - <<'PY'
+          import time
+          from pathlib import Path
+          from shenzhen.solver import _dragon_collapse_reachable
+          from shenzhen.textio import parse_board
+
+          state = parse_board(Path("/tmp/hard_dragon_deadlock.txt").read_text())
+          started = time.monotonic()
+          reachable, nodes = _dragon_collapse_reachable(
+              state, max_nodes=400_000, deadline=started + 600.0
+          )
+          print(
+              "HEAD_PROOF "
+              f"reachable={reachable} nodes={nodes} "
+              f"elapsed={time.monotonic() - started:.6f}s"
+          )
           PY
 
   lint:

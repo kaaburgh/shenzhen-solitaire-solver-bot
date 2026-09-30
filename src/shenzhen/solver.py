@@ -23,7 +23,7 @@ from ._solver_successors import (
     _search_key_parts,
     prepared_successors_from_settled,
 )
-from .cards import DRAGON_BASE, FLOWER, SUITS, is_locked, locked_colour
+from .cards import DRAGON_BASE, FLOWER, NUM_CARD_IDS, SUITS, is_locked, locked_colour
 from .game import Move, State, auto_resolve, successors
 
 DEFAULT_MAX_NODES = 400_000
@@ -147,6 +147,11 @@ def _search_key(state: State) -> tuple:
     """Canonical position identity shaped for the solver's hot dictionaries."""
     return _search_key_parts(state.columns, state.free, state.foundations, state.flower)
 
+def _state_from_search_key(key: tuple) -> State:
+    """Materialize one canonical representative directly from a search key."""
+    free = tuple(None if cell == NUM_CARD_IDS else cell for cell in key[8:11])
+    return State(key[:8], free, key[11:14], key[14])
+
 
 
 
@@ -170,7 +175,7 @@ def _dragon_collapse_reachable(
     """
     start_key = _search_key(state)
     seen = {start_key}
-    stack = [(start_key, state)]
+    stack = [start_key]
     run_cache: dict[tuple[int, ...], int] = {}
     nodes = 0
 
@@ -178,10 +183,11 @@ def _dragon_collapse_reachable(
         if nodes >= max_nodes or time.monotonic() >= deadline:
             return None, nodes
 
-        key, current = stack.pop()
+        key = stack.pop()
+        current = _state_from_search_key(key)
         nodes += 1
 
-        for move, nxt_key, nxt, _, parts in prepared_successors_from_settled(
+        for move, nxt_key, _, _, _ in prepared_successors_from_settled(
             current, key, run_cache
         ):
             if move.kind == "dr":
@@ -190,10 +196,7 @@ def _dragon_collapse_reachable(
                 continue
 
             seen.add(nxt_key)
-            if nxt is None:
-                assert parts is not None
-                nxt = _materialize_prepared(parts)
-            stack.append((nxt_key, nxt))
+            stack.append(nxt_key)
 
     return False, nodes
 

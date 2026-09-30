@@ -22,8 +22,8 @@ from .game import (
     _with_foundation,
     _with_free_cell,
     apply_move,
+    _iter_legal_moves,
     auto_resolve,
-    legal_moves,
 )
 
 _PreparedParts = tuple[
@@ -250,7 +250,7 @@ def prepared_successors_from_settled(
     A solve may also pass a shared ``run_cache`` so immutable column tuples do
     not have their movable suffix rescanned in every canonical position.
     """
-    for move in legal_moves(state, _run_cache=run_cache):
+    for move in _iter_legal_moves(state, _run_cache=run_cache):
         key, nxt, collected, parts = _prepare_generated_move(state, parent_key, move)
         yield move, key, nxt, collected, parts
 
