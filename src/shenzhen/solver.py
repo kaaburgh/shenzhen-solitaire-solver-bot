@@ -22,6 +22,7 @@ from ._solver_successors import (
     _materialize_prepared,
     _search_key_parts,
     prepared_successors_from_settled,
+    proof_successor_keys_from_key,
 )
 from .cards import DRAGON_BASE, FLOWER, SUITS, is_locked, locked_colour
 from .game import Move, State, auto_resolve, successors
@@ -170,7 +171,7 @@ def _dragon_collapse_reachable(
     """
     start_key = _search_key(state)
     seen = {start_key}
-    stack = [(start_key, state)]
+    stack = [start_key]
     run_cache: dict[tuple[int, ...], int] = {}
     nodes = 0
 
@@ -178,22 +179,17 @@ def _dragon_collapse_reachable(
         if nodes >= max_nodes or time.monotonic() >= deadline:
             return None, nodes
 
-        key, current = stack.pop()
+        key = stack.pop()
         nodes += 1
 
-        for move, nxt_key, nxt, _, parts in prepared_successors_from_settled(
-            current, key, run_cache
-        ):
-            if move.kind == "dr":
+        for nxt_key in proof_successor_keys_from_key(key, run_cache):
+            if nxt_key is None:
                 return True, nodes
             if nxt_key in seen:
                 continue
 
             seen.add(nxt_key)
-            if nxt is None:
-                assert parts is not None
-                nxt = _materialize_prepared(parts)
-            stack.append((nxt_key, nxt))
+            stack.append(nxt_key)
 
     return False, nodes
 

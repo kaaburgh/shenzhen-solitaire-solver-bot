@@ -1,12 +1,18 @@
+import random
 import time
 
 import shenzhen.solver as solver_mod
+from shenzhen._solver_successors import (
+    prepared_successors_from_settled,
+    proof_successor_keys_from_key,
+)
 from shenzhen.cards import GREEN, RED, make_dragon
-from shenzhen.game import Move, State
+from shenzhen.game import Move, State, apply_move, deal, legal_moves
 from shenzhen.solver import (
     Status,
     _dragon_collapse_reachable,
     _has_storage_pressure_for_dragon_proof,
+    _search_key,
 )
 
 
@@ -70,6 +76,29 @@ def test_storage_pressure_trigger_requires_matching_free_dragons():
 
     assert _has_storage_pressure_for_dragon_proof(matching)
     assert not _has_storage_pressure_for_dragon_proof(mixed)
+
+
+def test_proof_successor_keys_match_general_successors_on_settled_walks():
+    rng = random.Random(0)
+
+    for seed in range(20):
+        state = deal(seed)
+        for _ in range(20):
+            key = _search_key(state)
+            general = list(prepared_successors_from_settled(state, key))
+            expected_keys = {child_key for move, child_key, _, _, _ in general if move.kind != "dr"}
+            expected_collapse = any(move.kind == "dr" for move, _, _, _, _ in general)
+
+            proof = list(proof_successor_keys_from_key(key))
+            assert {child_key for child_key in proof if child_key is not None} == expected_keys
+            assert (None in proof) is expected_collapse
+
+            moves = legal_moves(state)
+            if not moves:
+                break
+            state, _ = apply_move(state, rng.choice(moves))
+            if state.is_won:
+                break
 
 
 
