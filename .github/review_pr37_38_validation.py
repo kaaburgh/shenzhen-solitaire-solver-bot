@@ -14,8 +14,8 @@ from shenzhen._solver_successors import (
     prepared_successors_from_settled,
     proof_successor_keys_from_key,
 )
-from shenzhen.cards import NUM_CARD_IDS
-from shenzhen.game import State, deal
+from shenzhen.cards import GREEN, NUM_CARD_IDS, RED, make_dragon
+from shenzhen.game import Move, State, deal
 from shenzhen.solver import (
     Status,
     _dragon_collapse_reachable,
@@ -113,6 +113,7 @@ def validate_solvable_trigger_states(states: list[tuple[int, State]]) -> None:
     proof_true = proof_unknown = 0
     max_proof_nodes = 0
     max_solve_elapsed = 0.0
+    max_solve_nodes = 0
     started = time.monotonic()
 
     for seed, state in sampled:
@@ -137,17 +138,20 @@ def validate_solvable_trigger_states(states: list[tuple[int, State]]) -> None:
             raise AssertionError(
                 f"solve returned false UNSOLVABLE on known-solvable trigger state from seed {seed}"
             )
+        assert result.nodes <= 400_000, result
         if result.status is Status.SOLVED:
             solved += 1
         else:
             unknown += 1
         max_solve_elapsed = max(max_solve_elapsed, result.elapsed)
+        max_solve_nodes = max(max_solve_nodes, result.nodes)
 
     print(
         "SOLVABLE_TRIGGER_SAMPLE "
         f"sampled={len(sampled)} proof_reachable={proof_true} "
         f"proof_unknown={proof_unknown} solved={solved} unknown={unknown} "
         f"max_proof_nodes={max_proof_nodes} "
+        f"max_solve_nodes={max_solve_nodes} "
         f"max_solve_elapsed={max_solve_elapsed:.6f}s "
         f"elapsed={time.monotonic() - started:.6f}s"
     )
@@ -174,9 +178,8 @@ def validate_budget_semantics() -> None:
     assert result.nodes == 100, result
     print(
         "NODE_BUDGET_OBSERVATION "
-        f"proof_nodes={observed[0][1]} astar_reported_nodes={result.nodes} "
-        f"configured_max_nodes=100 effective_expansions_at_least="
-        f"{observed[0][1] + result.nodes}"
+        f"proof_nodes={observed[0][1]} total_reported_nodes={result.nodes} "
+        "configured_max_nodes=100 remaining_for_astar=0"
     )
 
     observed.clear()
@@ -191,7 +194,55 @@ def validate_budget_semantics() -> None:
     print(
         "TIME_BUDGET_OBSERVATION "
         f"status={timed.status.value} proof_nodes={observed[0][1]} "
-        f"astar_reported_nodes={timed.nodes} elapsed={timed.elapsed:.6f}s"
+        f"total_reported_nodes={timed.nodes} elapsed={timed.elapsed:.6f}s"
+    )
+
+
+def validate_reachable_proof_uses_only_remaining_nodes() -> None:
+    green = make_dragon(GREEN)
+    red = make_dragon(RED)
+    state = State(
+        columns=((red,), (), (), (), (), (), (), ()),
+        free=(green, green, None),
+        foundations=(0, 0, 0),
+        flower=True,
+    )
+    child = State(
+        columns=((),) * 8,
+        free=state.free,
+        foundations=state.foundations,
+        flower=state.flower,
+    )
+
+    original_proof = solver_mod._dragon_collapse_reachable
+    original_successors = solver_mod.prepared_successors_from_settled
+    calls = 0
+
+    def fake_proof(*args, **kwargs):
+        return True, 2
+
+    def one_child(current, key, run_cache=None):
+        nonlocal calls
+        calls += 1
+        if calls > 1:
+            raise AssertionError("A* exceeded the one remaining node")
+        yield Move("tf", 0, 0), _search_key(child), child, (), None
+
+    solver_mod._dragon_collapse_reachable = fake_proof
+    solver_mod.prepared_successors_from_settled = one_child
+    try:
+        result = solver_mod.solve(state, max_nodes=3, time_limit=10.0)
+    finally:
+        solver_mod._dragon_collapse_reachable = original_proof
+        solver_mod.prepared_successors_from_settled = original_successors
+
+    assert result.status is Status.UNKNOWN, result
+    assert result.nodes == 3, result
+    assert calls == 1, calls
+    print(
+        "REACHABLE_PROOF_BUDGET "
+        "proof_nodes=2 astar_expansions=1 total_reported_nodes=3 "
+        "configured_max_nodes=3"
     )
 
 
@@ -200,6 +251,7 @@ def main() -> None:
     states = collect_solvable_trigger_states()
     validate_solvable_trigger_states(states)
     validate_budget_semantics()
+    validate_reachable_proof_uses_only_remaining_nodes()
 
 
 if __name__ == "__main__":
