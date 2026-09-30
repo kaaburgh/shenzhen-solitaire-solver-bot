@@ -33,6 +33,52 @@ jobs:
       - name: Test
         run: python -m pytest -q
 
+      - name: Independent PR 37+38 validation
+        if: matrix.python-version == '3.12'
+        run: python .github/review_pr37_38_validation.py
+
+      - name: Production-budget hard-case benchmark
+        if: matrix.python-version == '3.12'
+        env:
+          REVIEW_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          cp tests/solver_cases/hard_dragon_deadlock.txt /tmp/hard_dragon_deadlock.txt
+          git fetch --depth=1 origin 4f54360c72d564ab8ee7de20b435239bea400461
+          git worktree add --detach /tmp/pr37_38_base 4f54360c72d564ab8ee7de20b435239bea400461
+
+          for n in 1 2 3; do
+            PYTHONPATH=/tmp/pr37_38_base/src /usr/bin/time -f "BASE_RUN_${n}_WALL=%e BASE_RUN_${n}_MAXRSS=%M" \
+              python - <<'PY'
+          from pathlib import Path
+          from shenzhen.solver import solve
+          from shenzhen.textio import parse_board
+
+          state = parse_board(Path("/tmp/hard_dragon_deadlock.txt").read_text())
+          result = solve(state, max_nodes=400_000, time_limit=120.0)
+          print(
+              "BASE_120S "
+              f"status={result.status.value} nodes={result.nodes} "
+              f"elapsed={result.elapsed:.6f}s"
+          )
+          PY
+          done
+
+          for n in 1 2 3; do
+            /usr/bin/time -f "HEAD_RUN_${n}_WALL=%e HEAD_RUN_${n}_MAXRSS=%M" \
+              python - <<'PY'
+          from pathlib import Path
+          from shenzhen.solver import solve
+          from shenzhen.textio import parse_board
+
+          state = parse_board(Path("/tmp/hard_dragon_deadlock.txt").read_text())
+          result = solve(state, max_nodes=400_000, time_limit=120.0)
+          print(
+              "HEAD_120S "
+              f"status={result.status.value} nodes={result.nodes} "
+              f"elapsed={result.elapsed:.6f}s"
+          )
+          PY
+          done
   lint:
     runs-on: ubuntu-latest
     steps:
