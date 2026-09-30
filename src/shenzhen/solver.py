@@ -221,6 +221,7 @@ def solve(
     # path for that first expansion, after which every generated child is
     # settled and can use the solver fast path.
     start_settled = auto_resolve(state)[0] is state
+    proof_nodes = 0
 
     if start_settled and _has_storage_pressure_for_dragon_proof(state):
         collapse_reachable, proof_nodes = _dragon_collapse_reachable(
@@ -235,6 +236,15 @@ def solve(
                 proof_nodes,
                 time.monotonic() - started,
             )
+        if proof_nodes >= max_nodes or time.monotonic() >= started + time_limit:
+            return SolveResult(
+                Status.UNKNOWN,
+                [],
+                proof_nodes,
+                time.monotonic() - started,
+            )
+
+    search_max_nodes = max_nodes - proof_nodes
 
     # key -> (cost so far, parent key, move that got here, state, collected)
     seen: dict[tuple, tuple[int, tuple | None, Move | None, State, tuple[int, ...]]] = {
@@ -257,7 +267,7 @@ def solve(
     exhausted = True
 
     while queue:
-        if nodes >= max_nodes or time.monotonic() - started > time_limit:
+        if nodes >= search_max_nodes or time.monotonic() - started > time_limit:
             exhausted = False
             break
 
@@ -301,7 +311,7 @@ def solve(
                 return SolveResult(
                     Status.SOLVED,
                     _reconstruct(seen, nxt_key),
-                    nodes,
+                    proof_nodes + nodes,
                     time.monotonic() - started,
                 )
 
@@ -310,7 +320,7 @@ def solve(
             heapq.heappush(queue, (cost + HEURISTIC_WEIGHT * nxt_h, cost, counter, nxt_key))
 
     status = Status.UNSOLVABLE if exhausted else Status.UNKNOWN
-    return SolveResult(status, [], nodes, time.monotonic() - started)
+    return SolveResult(status, [], proof_nodes + nodes, time.monotonic() - started)
 
 
 def _reconstruct(seen: dict, key: tuple) -> list[Step]:

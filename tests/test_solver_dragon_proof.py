@@ -1,13 +1,15 @@
 import random
 import time
 
+import shenzhen.solver as solver_mod
 from shenzhen._solver_successors import (
     prepared_successors_from_settled,
     proof_successor_keys_from_key,
 )
 from shenzhen.cards import GREEN, RED, make_dragon
-from shenzhen.game import State, apply_move, deal, legal_moves
+from shenzhen.game import Move, State, apply_move, deal, legal_moves
 from shenzhen.solver import (
+    Status,
     _dragon_collapse_reachable,
     _has_storage_pressure_for_dragon_proof,
     _search_key,
@@ -97,3 +99,100 @@ def test_proof_successor_keys_match_general_successors_on_settled_walks():
             state, _ = apply_move(state, rng.choice(moves))
             if state.is_won:
                 break
+
+
+
+def _trigger_state() -> State:
+    green = make_dragon(GREEN)
+    red = make_dragon(RED)
+    return State(
+        columns=((red,), (), (), (), (), (), (), ()),
+        free=(green, green, None),
+        foundations=(0, 0, 0),
+        flower=True,
+    )
+
+
+def _one_astar_child(parent: State, calls: list[tuple]):
+    child = State(
+        columns=((),) * 8,
+        free=parent.free,
+        foundations=parent.foundations,
+        flower=parent.flower,
+    )
+
+    def successors(state, key, run_cache=None):
+        calls.append(key)
+        if len(calls) > 1:
+            raise AssertionError("A* exceeded its remaining node budget")
+        yield Move("tf", 0, 0), solver_mod._search_key(child), child, (), None
+
+    return successors
+
+
+def test_inconclusive_proof_nodes_count_toward_global_budget(monkeypatch):
+    state = _trigger_state()
+    calls: list[tuple] = []
+
+    monkeypatch.setattr(
+        solver_mod,
+        "_dragon_collapse_reachable",
+        lambda *args, **kwargs: (None, 2),
+    )
+    monkeypatch.setattr(
+        solver_mod,
+        "prepared_successors_from_settled",
+        _one_astar_child(state, calls),
+    )
+
+    result = solver_mod.solve(state, max_nodes=3, time_limit=10.0)
+
+    assert result.status is Status.UNKNOWN
+    assert result.nodes == 3
+    assert len(calls) == 1
+
+
+def test_proof_can_exhaust_the_whole_global_node_budget(monkeypatch):
+    state = _trigger_state()
+
+    monkeypatch.setattr(
+        solver_mod,
+        "_dragon_collapse_reachable",
+        lambda *args, **kwargs: (None, 3),
+    )
+
+    def unexpected_astar(*args, **kwargs):
+        raise AssertionError("A* must not run with no global node budget left")
+
+    monkeypatch.setattr(
+        solver_mod,
+        "prepared_successors_from_settled",
+        unexpected_astar,
+    )
+
+    result = solver_mod.solve(state, max_nodes=3, time_limit=10.0)
+
+    assert result.status is Status.UNKNOWN
+    assert result.nodes == 3
+
+
+def test_reachable_collapse_leaves_only_remaining_budget_for_astar(monkeypatch):
+    state = _trigger_state()
+    calls: list[tuple] = []
+
+    monkeypatch.setattr(
+        solver_mod,
+        "_dragon_collapse_reachable",
+        lambda *args, **kwargs: (True, 2),
+    )
+    monkeypatch.setattr(
+        solver_mod,
+        "prepared_successors_from_settled",
+        _one_astar_child(state, calls),
+    )
+
+    result = solver_mod.solve(state, max_nodes=3, time_limit=10.0)
+
+    assert result.status is Status.UNKNOWN
+    assert result.nodes == 3
+    assert len(calls) == 1
