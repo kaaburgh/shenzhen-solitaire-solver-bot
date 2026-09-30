@@ -108,7 +108,7 @@ def validate_solvable_trigger_states(states: list[tuple[int, State]]) -> None:
     if not states:
         raise AssertionError("200 solved-deal paths produced no trigger states")
 
-    sampled = states[:60]
+    sampled = states
     solved = unknown = 0
     proof_true = proof_unknown = 0
     max_proof_nodes = 0
