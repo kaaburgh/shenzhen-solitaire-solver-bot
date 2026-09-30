@@ -39,15 +39,16 @@ jobs:
 
       - name: Production-budget hard-case benchmark
         if: matrix.python-version == '3.12'
-        env:
-          REVIEW_HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
           cp tests/solver_cases/hard_dragon_deadlock.txt /tmp/hard_dragon_deadlock.txt
-          git fetch --depth=1 origin 4f54360c72d564ab8ee7de20b435239bea400461
-          git worktree add --detach /tmp/pr37_38_base 4f54360c72d564ab8ee7de20b435239bea400461
+
+          git fetch --depth=1 origin 623781f3ee7331dc600170013d5d51a5b06568bd
+          git fetch --depth=1 origin 1ee62ff120ebfd34bae8df5a88fb7e2d03771794
+          git worktree add --detach /tmp/pr38_base 623781f3ee7331dc600170013d5d51a5b06568bd
+          git worktree add --detach /tmp/pr38_head 1ee62ff120ebfd34bae8df5a88fb7e2d03771794
 
           for n in 1 2 3; do
-            PYTHONPATH=/tmp/pr37_38_base/src /usr/bin/time -f "BASE_RUN_${n}_WALL=%e BASE_RUN_${n}_MAXRSS=%M" \
+            PYTHONPATH=/tmp/pr38_base/src /usr/bin/time -f "BASE_RUN_${n}_WALL=%e BASE_RUN_${n}_MAXRSS=%M" \
               python - <<'PY'
           from pathlib import Path
           from shenzhen.solver import solve
@@ -64,7 +65,7 @@ jobs:
           done
 
           for n in 1 2 3; do
-            /usr/bin/time -f "HEAD_RUN_${n}_WALL=%e HEAD_RUN_${n}_MAXRSS=%M" \
+            PYTHONPATH=/tmp/pr38_head/src /usr/bin/time -f "HEAD_RUN_${n}_WALL=%e HEAD_RUN_${n}_MAXRSS=%M" \
               python - <<'PY'
           from pathlib import Path
           from shenzhen.solver import solve
@@ -79,6 +80,7 @@ jobs:
           )
           PY
           done
+
   lint:
     runs-on: ubuntu-latest
     steps:
