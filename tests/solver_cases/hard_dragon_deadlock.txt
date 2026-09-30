@@ -7,9 +7,15 @@
 #   205374 positions
 #   214351 positions
 #
-# Initial local diagnostic exhausted the canonical graph at 287972 positions
-# and returned UNSOLVABLE. Reproduce that measurement remotely before treating
-# it as an acceptance baseline.
+# Remote baseline, GitHub Actions run 36681055287, Ubuntu 24.04,
+# CPython 3.12.14, base solver 4f54360c72d564ab8ee7de20b435239bea400461:
+#   status: UNSOLVABLE
+#   canonical positions expanded: 287972
+#   solver elapsed: 13.225457 s
+#   process wall time: 13.54 s
+#   maximum RSS: 255056 KiB
+#
+# The node count is the acceptance baseline; elapsed time is runner-dependent.
 
 free: . DB DB
 flower: 1
