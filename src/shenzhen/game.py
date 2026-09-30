@@ -372,15 +372,16 @@ def can_collapse_dragons(state: State, colour: int) -> bool:
     return any(cell is None or cell == dragon for cell in state.free)
 
 
-def _iter_legal_moves(
+def legal_moves(
     state: State, *, _run_cache: dict[tuple[int, ...], int] | None = None
-) -> Iterator[Move]:
+) -> list[Move]:
     """Every move the player could make from ``state``.
 
     ``_run_cache`` is solver-private scratch storage.  The public path leaves it
     unset; a solve may reuse run lengths for immutable column tuples seen in
     many canonical positions.
     """
+    moves: list[Move] = []
     columns = state.columns
     free = state.free
     foundations = state.foundations
@@ -443,11 +444,11 @@ def _iter_legal_moves(
     has_empty_cell = empty_cell is not None
     for colour in SUITS:
         if exposed_dragons[colour] == 4 and (has_empty_cell or free_dragons[colour]):
-            yield Move("dr", colour)
+            moves.append(Move("dr", colour))
     for i in foundation_columns:
-        yield Move("tF", i)
+        moves.append(Move("tF", i))
     for i in foundation_free:
-        yield Move("fF", i)
+        moves.append(Move("fF", i))
 
     empty_column_mask = 0 if first_empty_column is None else 1 << first_empty_column
 
@@ -475,13 +476,13 @@ def _iter_legal_moves(
                 n = need_rank - base_rank + 1
                 head = col[length - n]
                 if head // 9 != forbidden_suit:
-                    yield Move("tt", src, dst, n)
+                    moves.append(Move("tt", src, dst, n))
             else:
                 for n in range(1, run + 1):
                     # Relocating a whole column into an empty one changes
                     # nothing but the column index.
                     if n != length:
-                        yield Move("tt", src, dst, n)
+                        moves.append(Move("tt", src, dst, n))
 
     # Free cell -> tableau.  Reuse the same rank index: a free-cell card can
     # only stack on one required rank, plus the first interchangeable empty.
@@ -497,27 +498,20 @@ def _iter_legal_moves(
         for dst in _DESTINATIONS_BY_MASK[candidate_mask]:
             target = columns[dst]
             if not target:
-                yield Move("ft", i, dst)
+                moves.append(Move("ft", i, dst))
                 continue
             need = accepts[dst]
             if cell_suit != need[1]:
-                yield Move("ft", i, dst)
+                moves.append(Move("ft", i, dst))
 
     # Tableau -> free cell.  All empty cells are interchangeable, so only the
     # first one is offered.
     if empty_cell is not None:
         for src, col in enumerate(columns):
             if col:
-                yield Move("tf", src, empty_cell)
+                moves.append(Move("tf", src, empty_cell))
 
-    return
-
-
-def legal_moves(
-    state: State, *, _run_cache: dict[tuple[int, ...], int] | None = None
-) -> list[Move]:
-    """Every move the player could make from state, in stable order."""
-    return list(_iter_legal_moves(state, _run_cache=_run_cache))
+    return moves
 
 
 class IllegalMove(ValueError):

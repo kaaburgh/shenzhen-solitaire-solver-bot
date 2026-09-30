@@ -15,15 +15,17 @@ from __future__ import annotations
 
 from collections.abc import Iterator, Sequence
 
-from .cards import DRAGON_BASE, FLOWER, NUM_CARD_IDS
+from .cards import DRAGON_BASE, FLOWER, NUM_CARD_IDS, SUITS
 from .game import (
     Move,
     State,
+    _DESTINATIONS_BY_MASK,
     _with_foundation,
     _with_free_cell,
     apply_move,
-    _iter_legal_moves,
     auto_resolve,
+    legal_moves,
+    max_run_length,
 )
 
 _PreparedParts = tuple[
@@ -250,10 +252,205 @@ def prepared_successors_from_settled(
     A solve may also pass a shared ``run_cache`` so immutable column tuples do
     not have their movable suffix rescanned in every canonical position.
     """
-    for move in _iter_legal_moves(state, _run_cache=run_cache):
+    for move in legal_moves(state, _run_cache=run_cache):
         key, nxt, collected, parts = _prepare_generated_move(state, parent_key, move)
         yield move, key, nxt, collected, parts
 
+
+
+def _proof_free_key_with(
+    free: tuple[int, int, int], slot: int, value: int
+) -> tuple[int, int, int]:
+    """Replace one canonical free-cell value and restore canonical order."""
+    values = list(free)
+    values[slot] = value
+    a, b, c = values
+    if a > b:
+        a, b = b, a
+    if b > c:
+        b, c = c, b
+    if a > b:
+        a, b = b, a
+    return a, b, c
+
+
+def proof_successor_keys_from_key(
+    parent_key: tuple,
+    run_cache: dict[tuple[int, ...], int] | None = None,
+) -> Iterator[tuple | None]:
+    """Yield exact non-collapse child keys; None means a collapse is legal.
+
+    This is the proof-only hot path. It consumes the canonical search key
+    directly, avoids Move/State construction for stable children, and falls
+    back to the general prepared path only when automatic resolution can run.
+    """
+    columns = parent_key[:8]
+    free = parent_key[8:11]
+    foundations = parent_key[11:14]
+    flower = parent_key[14]
+
+    exposed_dragons = [0, 0, 0]
+    free_dragons = [False, False, False]
+    empty_cell = None
+    foundation_free: list[int] = []
+    for i, cell in enumerate(free):
+        if cell == NUM_CARD_IDS:
+            if empty_cell is None:
+                empty_cell = i
+        elif DRAGON_BASE <= cell < FLOWER:
+            colour = cell - DRAGON_BASE
+            exposed_dragons[colour] += 1
+            free_dragons[colour] = True
+        elif 0 <= cell < DRAGON_BASE and foundations[cell // 9] == cell % 9:
+            foundation_free.append(i)
+
+    first_empty_column = None
+    runs: list[int] = []
+    accepts: list[tuple[int, int] | None] = []
+    destination_masks = [0] * 9
+    foundation_columns: list[int] = []
+    for i, col in enumerate(columns):
+        if not col:
+            if first_empty_column is None:
+                first_empty_column = i
+            runs.append(0)
+            accepts.append(None)
+            continue
+
+        if run_cache is None:
+            run = max_run_length(col)
+        else:
+            run = run_cache.get(col)
+            if run is None:
+                run = max_run_length(col)
+                run_cache[col] = run
+        runs.append(run)
+        top = col[-1]
+        if top < DRAGON_BASE:
+            need = (top % 9, top // 9)
+            accepts.append(need)
+            destination_masks[need[0]] |= 1 << i
+            if foundations[top // 9] == top % 9:
+                foundation_columns.append(i)
+        else:
+            accepts.append(None)
+            if DRAGON_BASE <= top < FLOWER:
+                exposed_dragons[top - DRAGON_BASE] += 1
+
+    has_empty_cell = empty_cell is not None
+    for colour in SUITS:
+        if exposed_dragons[colour] == 4 and (has_empty_cell or free_dragons[colour]):
+            yield None
+
+    decoded_state: State | None = None
+
+    def fallback_key(move: Move) -> tuple:
+        nonlocal decoded_state
+        if decoded_state is None:
+            decoded_free = tuple(
+                None if cell == NUM_CARD_IDS else cell for cell in free
+            )
+            decoded_state = State(columns, decoded_free, foundations, flower)
+        return _fully_prepare_generated_move(decoded_state, move)[0]
+
+    for src in foundation_columns:
+        source = columns[src]
+        card = source[-1]
+        new_source = source[:-1]
+        new_foundations = _with_foundation(foundations, card // 9, card % 9 + 1)
+        if new_source and _top_needs_auto(new_source[-1], new_foundations):
+            yield fallback_key(Move("tF", src))
+            continue
+        new_columns = list(columns)
+        new_columns[src] = new_source
+        yield (
+            *sorted(new_columns),
+            *free,
+            *new_foundations,
+            flower,
+        )
+
+    for slot in foundation_free:
+        card = free[slot]
+        new_free = _proof_free_key_with(free, slot, NUM_CARD_IDS)
+        new_foundations = _with_foundation(foundations, card // 9, card % 9 + 1)
+        yield (*columns, *new_free, *new_foundations, flower)
+
+    empty_column_mask = 0 if first_empty_column is None else 1 << first_empty_column
+
+    for src, col in enumerate(columns):
+        run = runs[src]
+        if run == 0:
+            continue
+        length = len(col)
+        top = col[-1]
+        base_rank = top % 9 + 1 if top < DRAGON_BASE else None
+
+        candidate_mask = empty_column_mask
+        if base_rank is not None:
+            for need_rank in range(base_rank, min(base_rank + run, 9)):
+                candidate_mask |= destination_masks[need_rank]
+        candidate_mask &= ~(1 << src)
+
+        for dst in _DESTINATIONS_BY_MASK[candidate_mask]:
+            target = columns[dst]
+            if target:
+                need_rank, forbidden_suit = accepts[dst]
+                n = need_rank - base_rank + 1
+                head = col[length - n]
+                if head // 9 == forbidden_suit:
+                    continue
+                counts = (n,)
+            else:
+                counts = range(1, run + 1)
+
+            for n in counts:
+                if not target and n == length:
+                    continue
+                new_source = col[:-n]
+                if new_source and _top_needs_auto(new_source[-1], foundations):
+                    yield fallback_key(Move("tt", src, dst, n))
+                    continue
+                new_columns = list(columns)
+                new_columns[src] = new_source
+                new_columns[dst] = target + col[-n:]
+                yield (*sorted(new_columns), *parent_key[8:])
+
+    for slot, cell in enumerate(free):
+        if cell == NUM_CARD_IDS or cell < 0:
+            continue
+        cell_rank = cell % 9 + 1 if cell < DRAGON_BASE else None
+        cell_suit = cell // 9
+        candidate_mask = empty_column_mask
+        if cell_rank is not None and cell_rank < 9:
+            candidate_mask |= destination_masks[cell_rank]
+
+        for dst in _DESTINATIONS_BY_MASK[candidate_mask]:
+            target = columns[dst]
+            if target:
+                need = accepts[dst]
+                if cell_suit == need[1]:
+                    continue
+            if cell == FLOWER:
+                yield fallback_key(Move("ft", slot, dst))
+                continue
+            new_columns = list(columns)
+            new_columns[dst] = target + (cell,)
+            new_free = _proof_free_key_with(free, slot, NUM_CARD_IDS)
+            yield (*sorted(new_columns), *new_free, *foundations, flower)
+
+    if empty_cell is not None:
+        for src, col in enumerate(columns):
+            if not col:
+                continue
+            new_source = col[:-1]
+            if new_source and _top_needs_auto(new_source[-1], foundations):
+                yield fallback_key(Move("tf", src, empty_cell))
+                continue
+            new_columns = list(columns)
+            new_columns[src] = new_source
+            new_free = _proof_free_key_with(free, empty_cell, col[-1])
+            yield (*sorted(new_columns), *new_free, *foundations, flower)
 
 def _materialize_prepared(parts: _PreparedParts) -> State:
     """Construct a State for a prepared child that survived deduplication."""

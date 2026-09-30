@@ -1,14 +1,16 @@
 import random
 import time
 
-from shenzhen._solver_successors import prepared_successors_from_settled
+from shenzhen._solver_successors import (
+    prepared_successors_from_settled,
+    proof_successor_keys_from_key,
+)
 from shenzhen.cards import GREEN, RED, make_dragon
 from shenzhen.game import State, apply_move, deal, legal_moves
 from shenzhen.solver import (
     _dragon_collapse_reachable,
     _has_storage_pressure_for_dragon_proof,
     _search_key,
-    _state_from_search_key,
 )
 
 
@@ -74,26 +76,20 @@ def test_storage_pressure_trigger_requires_matching_free_dragons():
     assert not _has_storage_pressure_for_dragon_proof(mixed)
 
 
-def test_canonical_key_representative_has_the_same_successor_graph():
+def test_proof_successor_keys_match_general_successors_on_settled_walks():
     rng = random.Random(0)
 
     for seed in range(20):
         state = deal(seed)
         for _ in range(20):
             key = _search_key(state)
-            canonical = _state_from_search_key(key)
+            general = list(prepared_successors_from_settled(state, key))
+            expected_keys = {child_key for move, child_key, _, _, _ in general if move.kind != "dr"}
+            expected_collapse = any(move.kind == "dr" for move, _, _, _, _ in general)
 
-            assert _search_key(canonical) == key
-
-            original = {
-                (move.kind == "dr", child_key)
-                for move, child_key, _, _, _ in prepared_successors_from_settled(state, key)
-            }
-            rebuilt = {
-                (move.kind == "dr", child_key)
-                for move, child_key, _, _, _ in prepared_successors_from_settled(canonical, key)
-            }
-            assert rebuilt == original
+            proof = list(proof_successor_keys_from_key(key))
+            assert {child_key for child_key in proof if child_key is not None} == expected_keys
+            assert (None in proof) is expected_collapse
 
             moves = legal_moves(state)
             if not moves:

@@ -22,8 +22,9 @@ from ._solver_successors import (
     _materialize_prepared,
     _search_key_parts,
     prepared_successors_from_settled,
+    proof_successor_keys_from_key,
 )
-from .cards import DRAGON_BASE, FLOWER, NUM_CARD_IDS, SUITS, is_locked, locked_colour
+from .cards import DRAGON_BASE, FLOWER, SUITS, is_locked, locked_colour
 from .game import Move, State, auto_resolve, successors
 
 DEFAULT_MAX_NODES = 400_000
@@ -147,11 +148,6 @@ def _search_key(state: State) -> tuple:
     """Canonical position identity shaped for the solver's hot dictionaries."""
     return _search_key_parts(state.columns, state.free, state.foundations, state.flower)
 
-def _state_from_search_key(key: tuple) -> State:
-    """Materialize one canonical representative directly from a search key."""
-    free = tuple(None if cell == NUM_CARD_IDS else cell for cell in key[8:11])
-    return State(key[:8], free, key[11:14], key[14])
-
 
 
 
@@ -184,13 +180,10 @@ def _dragon_collapse_reachable(
             return None, nodes
 
         key = stack.pop()
-        current = _state_from_search_key(key)
         nodes += 1
 
-        for move, nxt_key, _, _, _ in prepared_successors_from_settled(
-            current, key, run_cache
-        ):
-            if move.kind == "dr":
+        for nxt_key in proof_successor_keys_from_key(key, run_cache):
+            if nxt_key is None:
                 return True, nodes
             if nxt_key in seen:
                 continue
