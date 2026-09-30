@@ -33,6 +33,31 @@ jobs:
       - name: Test
         run: python -m pytest -q
 
+      - name: Profile hard dragon deadlock
+        if: matrix.python-version == '3.12'
+        run: |
+          python - <<'PY'
+          import cProfile
+          import pstats
+          from pathlib import Path
+
+          from shenzhen.solver import solve
+          from shenzhen.textio import parse_board
+
+          state = parse_board(Path("tests/solver_cases/hard_dragon_deadlock.txt").read_text())
+          profile = cProfile.Profile()
+          result = profile.runcall(solve, state, max_nodes=400_000, time_limit=600.0)
+          print(
+              "HARD_DRAGON_PROFILE "
+              f"status={result.status.value} nodes={result.nodes} "
+              f"elapsed={result.elapsed:.6f}s"
+          )
+          print("TOP_CUMULATIVE")
+          pstats.Stats(profile).strip_dirs().sort_stats("cumulative").print_stats(30)
+          print("TOP_TOTTIME")
+          pstats.Stats(profile).strip_dirs().sort_stats("tottime").print_stats(30)
+          PY
+
   lint:
     runs-on: ubuntu-latest
     steps:
