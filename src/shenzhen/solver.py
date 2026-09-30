@@ -23,7 +23,7 @@ from ._solver_successors import (
     _search_key_parts,
     prepared_successors_from_settled,
 )
-from .cards import SUITS, is_locked, locked_colour
+from .cards import DRAGON_BASE, FLOWER, SUITS, is_locked, locked_colour
 from .game import Move, State, auto_resolve, successors
 
 DEFAULT_MAX_NODES = 400_000
@@ -31,6 +31,12 @@ DEFAULT_TIME_LIMIT = 20.0
 # Tuned on 200 random deals: at 8 the worst case drops from ~10s to ~2s while
 # the returned lines stay within a move of what a weight of 3 finds.
 HEURISTIC_WEIGHT = 8
+
+# A targeted proof is only attempted for the storage-pressure shape seen in the
+# production regression: two matching dragons already occupy free cells. The
+# proof itself is exact; this trigger only decides when its extra work is worth
+# trying before weighted A*.
+DRAGON_PROOF_MAX_NODES = 300_000
 
 
 class Status(StrEnum):
@@ -142,6 +148,65 @@ def _search_key(state: State) -> tuple:
     return _search_key_parts(state.columns, state.free, state.foundations, state.flower)
 
 
+
+
+def _dragon_collapse_reachable(
+    state: State,
+    *,
+    max_nodes: int,
+    deadline: float,
+) -> tuple[bool | None, int]:
+    """Can any not-yet-collapsed dragon colour ever be collapsed?
+
+    Search only as far as the first dragon collapse. If this exact
+    reachability graph is exhausted without generating a dragon-collapse move,
+    a win is impossible: every winning line must contain a first remaining
+    dragon collapse, and every move before it is one of the non-collapse edges
+    walked here.
+
+    True means a collapse is reachable, False is the exhaustive proof that
+    none is, and None means this side search hit its own node/time budget and
+    therefore proves nothing.
+    """
+    start_key = _search_key(state)
+    seen = {start_key}
+    stack = [(start_key, state)]
+    run_cache: dict[tuple[int, ...], int] = {}
+    nodes = 0
+
+    while stack:
+        if nodes >= max_nodes or time.monotonic() >= deadline:
+            return None, nodes
+
+        key, current = stack.pop()
+        nodes += 1
+
+        for move, nxt_key, nxt, _, parts in prepared_successors_from_settled(
+            current, key, run_cache
+        ):
+            if move.kind == "dr":
+                return True, nodes
+            if nxt_key in seen:
+                continue
+
+            seen.add(nxt_key)
+            if nxt is None:
+                assert parts is not None
+                nxt = _materialize_prepared(parts)
+            stack.append((nxt_key, nxt))
+
+    return False, nodes
+
+
+def _has_storage_pressure_for_dragon_proof(state: State) -> bool:
+    """Whether this position is narrow enough to justify the proof search."""
+    free_dragons = [
+        cell
+        for cell in state.free
+        if cell is not None and DRAGON_BASE <= cell < FLOWER
+    ]
+    return len(free_dragons) >= 2 and len(set(free_dragons)) < len(free_dragons)
+
 def solve(
     state: State,
     *,
@@ -160,6 +225,20 @@ def solve(
     # path for that first expansion, after which every generated child is
     # settled and can use the solver fast path.
     start_settled = auto_resolve(state)[0] is state
+
+    if start_settled and _has_storage_pressure_for_dragon_proof(state):
+        collapse_reachable, proof_nodes = _dragon_collapse_reachable(
+            state,
+            max_nodes=min(max_nodes, DRAGON_PROOF_MAX_NODES),
+            deadline=started + time_limit,
+        )
+        if collapse_reachable is False:
+            return SolveResult(
+                Status.UNSOLVABLE,
+                [],
+                proof_nodes,
+                time.monotonic() - started,
+            )
 
     # key -> (cost so far, parent key, move that got here, state, collected)
     seen: dict[tuple, tuple[int, tuple | None, Move | None, State, tuple[int, ...]]] = {
