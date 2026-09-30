@@ -33,22 +33,19 @@ jobs:
       - name: Test
         run: python -m pytest -q
 
-      - name: Independent PR 37+38 validation
+      - name: Independent final-main validation
         if: matrix.python-version == '3.12'
         run: python .github/review_pr37_38_validation.py
 
-      - name: Production-budget hard-case benchmark
+      - name: Final-main hard-case benchmark
         if: matrix.python-version == '3.12'
         run: |
           cp tests/solver_cases/hard_dragon_deadlock.txt /tmp/hard_dragon_deadlock.txt
-
-          git fetch --depth=1 origin 623781f3ee7331dc600170013d5d51a5b06568bd
-          git fetch --depth=1 origin 1ee62ff120ebfd34bae8df5a88fb7e2d03771794
-          git worktree add --detach /tmp/pr38_base 623781f3ee7331dc600170013d5d51a5b06568bd
-          git worktree add --detach /tmp/pr38_head 1ee62ff120ebfd34bae8df5a88fb7e2d03771794
+          git fetch --depth=1 origin aae78d814449f3780ed94c7863f2e2ef5f6629ee
+          git worktree add --detach /tmp/final_main aae78d814449f3780ed94c7863f2e2ef5f6629ee
 
           for n in 1 2 3; do
-            PYTHONPATH=/tmp/pr38_base/src /usr/bin/time -f "BASE_RUN_${n}_WALL=%e BASE_RUN_${n}_MAXRSS=%M" \
+            PYTHONPATH=/tmp/final_main/src /usr/bin/time -f "FINAL_MAIN_RUN_${n}_WALL=%e FINAL_MAIN_RUN_${n}_MAXRSS=%M" \
               python - <<'PY'
           from pathlib import Path
           from shenzhen.solver import solve
@@ -57,24 +54,7 @@ jobs:
           state = parse_board(Path("/tmp/hard_dragon_deadlock.txt").read_text())
           result = solve(state, max_nodes=400_000, time_limit=120.0)
           print(
-              "BASE_120S "
-              f"status={result.status.value} nodes={result.nodes} "
-              f"elapsed={result.elapsed:.6f}s"
-          )
-          PY
-          done
-
-          for n in 1 2 3; do
-            PYTHONPATH=/tmp/pr38_head/src /usr/bin/time -f "HEAD_RUN_${n}_WALL=%e HEAD_RUN_${n}_MAXRSS=%M" \
-              python - <<'PY'
-          from pathlib import Path
-          from shenzhen.solver import solve
-          from shenzhen.textio import parse_board
-
-          state = parse_board(Path("/tmp/hard_dragon_deadlock.txt").read_text())
-          result = solve(state, max_nodes=400_000, time_limit=120.0)
-          print(
-              "HEAD_120S "
+              "FINAL_MAIN_120S "
               f"status={result.status.value} nodes={result.nodes} "
               f"elapsed={result.elapsed:.6f}s"
           )
