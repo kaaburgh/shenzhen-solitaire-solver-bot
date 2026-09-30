@@ -33,6 +33,33 @@ jobs:
       - name: Test
         run: python -m pytest -q
 
+      - name: Profile dragon proof hot path
+        if: matrix.python-version == '3.12'
+        run: |
+          python - <<'PY'
+          import cProfile
+          import pstats
+          import time
+          from pathlib import Path
+
+          from shenzhen.solver import _dragon_collapse_reachable
+          from shenzhen.textio import parse_board
+
+          state = parse_board(Path("tests/solver_cases/hard_dragon_deadlock.txt").read_text())
+          profile = cProfile.Profile()
+          result = profile.runcall(
+              _dragon_collapse_reachable,
+              state,
+              max_nodes=400_000,
+              deadline=time.monotonic() + 600.0,
+          )
+          print(f"DRAGON_PROOF_PROFILE reachable={result[0]} nodes={result[1]}")
+          print("TOP_CUMULATIVE")
+          pstats.Stats(profile).strip_dirs().sort_stats("cumulative").print_stats(30)
+          print("TOP_TOTTIME")
+          pstats.Stats(profile).strip_dirs().sort_stats("tottime").print_stats(30)
+          PY
+
   lint:
     runs-on: ubuntu-latest
     steps:
